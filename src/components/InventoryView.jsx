@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useNotifications } from '../lib/notifications'
 
 export default function InventoryView({ session }) {
+  const { notifyError } = useNotifications()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [syncingByFoodId, setSyncingByFoodId] = useState({})
 
   useEffect(() => { loadData() }, [])
 
@@ -22,22 +25,58 @@ export default function InventoryView({ session }) {
   }
 
   async function changeQty(item, delta) {
+    if (syncingByFoodId[item.food_id]) return
+
+    const previousQty = item.quantity
     const newQty = item.quantity + delta
-    if (newQty <= 0) {
-      await supabase.from('inventory').delete()
-        .eq('owner_id', session.user_id)
-        .eq('food_id', item.food_id)
+    const nextQty = Math.max(newQty, 0)
+
+    setSyncingByFoodId((prev) => ({ ...prev, [item.food_id]: true }))
+
+    // Optimistic UI update so plus/minus feels immediate.
+    if (nextQty <= 0) {
       setItems((prev) => prev.filter((i) => i.food_id !== item.food_id))
     } else {
-      const { error } = await supabase.from('inventory')
-        .update({ quantity: newQty, last_updated: new Date().toISOString() })
-        .eq('owner_id', session.user_id)
-        .eq('food_id', item.food_id)
-      if (error) { alert(error.message); return }
       setItems((prev) => prev.map((i) =>
-        i.food_id === item.food_id ? { ...i, quantity: newQty } : i
+        i.food_id === item.food_id ? { ...i, quantity: nextQty } : i
       ))
     }
+
+    let error = null
+    if (newQty <= 0) {
+      const result = await supabase.from('inventory').delete()
+        .eq('owner_id', session.user_id)
+        .eq('food_id', item.food_id)
+      error = result.error
+    } else {
+      const result = await supabase.from('inventory')
+        .update({ quantity: nextQty, last_updated: new Date().toISOString() })
+        .eq('owner_id', session.user_id)
+        .eq('food_id', item.food_id)
+      error = result.error
+    }
+
+    if (error) {
+      // Roll back optimistic change on failure.
+      if (previousQty <= 0) {
+        setItems((prev) => prev.filter((i) => i.food_id !== item.food_id))
+      } else {
+        setItems((prev) => {
+          const exists = prev.some((i) => i.food_id === item.food_id)
+          if (exists) {
+            return prev.map((i) => i.food_id === item.food_id ? { ...i, quantity: previousQty } : i)
+          }
+          return [{ ...item, quantity: previousQty }, ...prev]
+        })
+      }
+      notifyError(error.message)
+    }
+
+    setSyncingByFoodId((prev) => {
+      const updated = { ...prev }
+      delete updated[item.food_id]
+      return updated
+    })
   }
 
   if (loading) return <div className="loading">טוען...</div>
@@ -86,9 +125,9 @@ export default function InventoryView({ session }) {
               {item.food.unit_qty && <div className="food-meta">{item.food.unit_qty}</div>}
             </div>
             <div className="qty-controls" onClick={(e) => e.stopPropagation()}>
-              <button onClick={() => changeQty(item, -1)}>−</button>
+              <button onClick={() => changeQty(item, -1)} disabled={!!syncingByFoodId[item.food_id]}>−</button>
               <span className="qty">{item.quantity}</span>
-              <button onClick={() => changeQty(item, +1)}>+</button>
+              <button onClick={() => changeQty(item, +1)} disabled={!!syncingByFoodId[item.food_id]}>+</button>
             </div>
           </div>
         ))}

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useNotifications } from '../lib/notifications'
 
 export default function ReceiptQRScanner({ session, foods, onClose, onItemsAdded }) {
+  const { notifySuccess, notifyError } = useNotifications()
   const [scanning, setScanning] = useState(false)
   const [scannedData, setScannedData] = useState(null)
   const [matchedItems, setMatchedItems] = useState([])
@@ -25,7 +27,7 @@ export default function ReceiptQRScanner({ session, foods, onClose, onItemsAdded
           videoRef.current.play()
         }
       } catch (err) {
-        alert('לא ניתן לגשת למצלמה: ' + err.message)
+        notifyError('לא ניתן לגשת למצלמה: ' + err.message)
         setScanning(false)
       }
     }
@@ -67,7 +69,7 @@ export default function ReceiptQRScanner({ session, foods, onClose, onItemsAdded
       const data = JSON.parse(jsonString)
       processReceiptData(data)
     } catch (err) {
-      alert('פורמט JSON לא תקין: ' + err.message)
+      notifyError('פורמט JSON לא תקין: ' + err.message)
     }
   }
 
@@ -113,7 +115,7 @@ export default function ReceiptQRScanner({ session, foods, onClose, onItemsAdded
     }))
 
     if (updates.length === 0) {
-      alert('אין פריטים התואמים להוספה')
+      notifyError('אין פריטים התואמים להוספה')
       return
     }
 
@@ -122,11 +124,11 @@ export default function ReceiptQRScanner({ session, foods, onClose, onItemsAdded
     })
 
     if (error) {
-      alert('שגיאה בהוספה: ' + error.message)
+      notifyError('שגיאה בהוספה: ' + error.message)
       return
     }
 
-    alert(`נוספו ${updates.length} פריטים למלאי! ✅`)
+    notifySuccess(`נוספו ${updates.length} פריטים למלאי! ✅`)
     onItemsAdded?.(matched)
     onClose()
   }

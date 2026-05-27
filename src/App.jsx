@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getCurrentSession, logout } from './lib/auth'
 import { initTheme } from './lib/theme'
+import { NotificationsProvider } from './lib/notifications'
 import LoginScreen from './components/LoginScreen'
 import OwnerHome from './components/OwnerHome'
 import ShopperHome from './components/ShopperHome'
@@ -20,11 +21,15 @@ export default function App() {
     setSession(null)
   }
 
-  if (!loaded) return null
-  if (!session) return <LoginScreen onLogin={setSession} />
-
-  if (session.role === 'shopper') {
-    return <ShopperHome session={session} onLogout={handleLogout} />
-  }
-  return <OwnerHome session={session} onLogout={handleLogout} />
+  return (
+    <NotificationsProvider>
+      {!loaded ? null : !session ? (
+        <LoginScreen onLogin={setSession} />
+      ) : session.role === 'shopper' ? (
+        <ShopperHome session={session} onLogout={handleLogout} />
+      ) : (
+        <OwnerHome session={session} onLogout={handleLogout} />
+      )}
+    </NotificationsProvider>
+  )
 }

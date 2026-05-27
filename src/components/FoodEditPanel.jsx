@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import ConfirmDialog from './ConfirmDialog'
 
 export default function FoodEditPanel({ food, onClose, onSave, onDelete }) {
   const [name, setName] = useState(food?.name || '')
@@ -8,21 +9,25 @@ export default function FoodEditPanel({ food, onClose, onSave, onDelete }) {
   const [unitQty, setUnitQty] = useState(food?.unit_qty || '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const isNew = !food?.id
   const isValid = name.trim().length > 0
 
   function handleCancel() {
-    if (!isNew && window.confirm(`בטל עריכה של "${food.name}"?`)) {
+    if (isNew) {
       onClose()
-    } else if (isNew) {
-      onClose()
+      return
     }
+    setShowCancelConfirm(true)
   }
 
   async function handleDelete() {
-    if (!window.confirm(`האם אתה בטוח שברצונך למחוק את "${food.name}"?`)) return
+    setShowDeleteConfirm(true)
+  }
 
+  async function confirmDelete() {
     setSaving(true)
     try {
       const { error: err } = await supabase
@@ -159,6 +164,28 @@ export default function FoodEditPanel({ food, onClose, onSave, onDelete }) {
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={showCancelConfirm}
+        title="ביטול עריכה"
+        message={`לבטל את העריכה של "${food?.name}"?`}
+        confirmText="בטל עריכה"
+        confirmClassName="btn-secondary"
+        onConfirm={() => { setShowCancelConfirm(false); onClose() }}
+        onCancel={() => setShowCancelConfirm(false)}
+        loading={saving}
+      />
+
+      <ConfirmDialog
+        open={showDeleteConfirm}
+        title="מחיקת מוצר"
+        message={`האם למחוק את "${food?.name}"?`}
+        confirmText="מחק מוצר"
+        confirmClassName="btn-danger"
+        onConfirm={confirmDelete}
+        onCancel={() => setShowDeleteConfirm(false)}
+        loading={saving}
+      />
     </div>
   )
 }
