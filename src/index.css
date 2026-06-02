@@ -1,6 +1,6 @@
 :root {
   font-family: 'Assistant', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  font-size: 16px;
+  font-size: clamp(14px, 1.1vw + 0.35rem, 16px);
   -webkit-tap-highlight-color: transparent;
   -webkit-text-size-adjust: 100%;
   direction: rtl;
@@ -1165,28 +1165,87 @@ button:active { transform: scale(0.98); }
 .food-list.table-view {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.55rem;
+  gap: clamp(0.45rem, 1.2vw, 0.8rem);
 }
 
+.owner-home .food-list.table-view .food-card,
 .owner-home .food-list.table-view .food-card-wrapper {
+  height: 100%;
+  flex-direction: column;
   align-items: stretch;
 }
 
 .owner-home .food-list.table-view .food-card-content {
-  min-height: 62px;
-  padding: 0.52rem;
-  gap: 0.5rem;
+  display: grid;
+  grid-template-columns: clamp(2.7rem, 9vw, 3.4rem) minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "img info info info"
+    "img controls rating rating";
+  align-items: start;
+  height: clamp(9.8rem, 26vw, 11.25rem);
+  min-height: 0;
+  padding: clamp(0.55rem, 1.4vw, 0.8rem);
+  column-gap: clamp(0.45rem, 1vw, 0.7rem);
+  row-gap: clamp(0.35rem, 0.9vw, 0.55rem);
+  overflow: hidden;
 }
 
 .owner-home .food-list.table-view .food-img,
 .shopper-home .food-list.table-view .food-img {
-  width: 42px;
-  height: 42px;
+  width: clamp(2.6rem, 9vw, 3.15rem);
+  height: clamp(2.6rem, 9vw, 3.15rem);
+}
+
+.owner-home .food-list.table-view .food-img,
+.shopper-home .food-list.table-view .food-img {
+  grid-area: img;
+}
+
+.owner-home .food-list.table-view .food-info,
+.shopper-home .food-list.table-view .food-info {
+  grid-area: info;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+  min-height: 0;
+}
+
+.owner-home .food-list.table-view .owner-request-controls {
+  grid-area: controls;
+  margin-left: 0;
+  margin-top: 0;
+  justify-self: start;
+  align-self: end;
+}
+
+.owner-home .food-list.table-view .owner-rating-button {
+  grid-area: rating;
+  align-self: end;
+  justify-self: end;
+  margin-top: 0;
+  min-height: 1.8rem;
+  height: 1.8rem;
+  padding: 0 0.45rem;
+  font-size: 0.75rem;
+}
+
+.owner-home .food-list.table-view .food-card-edit {
+  align-self: center;
+}
+
+.owner-home .food-list.table-view .owner-add-request {
+  min-height: 1.8rem;
+  height: 1.8rem;
+  padding: 0 0.45rem;
+  font-size: 0.75rem;
 }
 
 .owner-home .food-list.table-view .food-info strong,
 .shopper-home .food-list.table-view .food-info strong {
-  font-size: 0.86rem;
+  font-size: clamp(0.78rem, 2.8vw, 0.9rem);
+  line-height: 1.15;
 }
 
 .owner-home .food-list.table-view .food-info small,
@@ -1194,17 +1253,61 @@ button:active { transform: scale(0.98); }
 .owner-home .food-list.table-view .food-meta,
 .shopper-home .food-list.table-view .food-meta {
   font-size: 0.72rem;
+  line-height: 1.15;
 }
 
 .shopper-home .food-list.table-view .food-card {
-  min-height: 62px;
-  padding: 0.52rem;
-  gap: 0.5rem;
+  display: grid;
+  grid-template-columns: clamp(2.7rem, 9vw, 3.4rem) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "img info"
+    "img qty";
+  align-items: start;
+  height: clamp(9.8rem, 26vw, 11.25rem);
+  min-height: 0;
+  padding: clamp(0.55rem, 1.4vw, 0.8rem);
+  column-gap: clamp(0.45rem, 1vw, 0.7rem);
+  row-gap: clamp(0.35rem, 0.9vw, 0.55rem);
+  overflow: hidden;
 }
 
 .shopper-home .food-list.table-view .qty-controls {
-  transform: scale(0.9);
+  grid-area: qty;
+  transform: scale(0.82);
   transform-origin: right center;
+}
+
+.shopper-home .food-list.table-view .qty-controls,
+.owner-home .food-list.table-view .qty-controls {
+  gap: 0.35rem;
+  padding: 0.2rem;
+  justify-content: center;
+}
+
+.owner-home .food-list.table-view .food-info strong,
+.owner-home .food-list.table-view .food-info small,
+.owner-home .food-list.table-view .food-meta,
+.shopper-home .food-list.table-view .food-info strong,
+.shopper-home .food-list.table-view .food-info small,
+.shopper-home .food-list.table-view .food-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.owner-home .food-list.table-view .owner-request-controls,
+.owner-home .food-list.table-view .owner-rating-button,
+.owner-home .food-list.table-view .food-card-edit,
+.shopper-home .food-list.table-view .qty-controls {
+  margin-top: auto;
+}
+
+.shopper-home .food-list.table-view .rating-badge {
+  align-self: end;
+  justify-self: end;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.75rem;
 }
 
 /* ---------- Tab navigation ---------- */
@@ -1214,23 +1317,26 @@ button:active { transform: scale(0.98); }
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  background: #1a1a1a;
+  background: var(--bg-tertiary);
   padding: 0.25rem;
   border-radius: 8px;
+  border: 1px solid var(--border-color-light);
 }
 .qty-controls button {
-  width: 32px;
-  height: 32px;
-  min-height: 32px;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
   padding: 0;
-  font-size: 1.25rem;
+  font-size: 1rem;
   font-weight: bold;
-  background: #444;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   border-radius: 6px;
 }
 .qty-controls .qty {
   min-width: 24px;
   text-align: center;
   font-weight: bold;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
+  color: var(--text-primary);
 }
