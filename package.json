@@ -8,13 +8,16 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "update-foods": "node scripts/updateFoods.js"
+    "probe-rami-levy": "node scripts/ramiLevyCatalogProbe.js",
+    "update-foods": "node scripts/ramiLevyCatalogProbe.js --upsert"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",
+    "@tailwindcss/vite": "^4.3.0",
     "fast-xml-parser": "^5.8.0",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "tailwindcss": "^4.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
