@@ -1,232 +1,284 @@
-import { useCallback, useEffect, useState } from 'react'
-import { formatCurrency, formatDate, initialsFor, requestStatusLabels } from '../lib/format'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import FoodFilterBar from './FoodFilterBar'
+import { DEFAULT_MANUFACTURER, addInventoryQuantities, applyRelatedRatings, fetchInventoryQuantities, fetchRatingsByOwner, fetchShoppingListItems } from '../lib/foodData'
+import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRatingMood } from '../lib/foodFilters'
 import { supabase } from '../lib/supabase'
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
 
-const realtimeTables = ['requests', 'request_items']
+const realtimeTables = ['shopping_list', 'ratings']
 
-export default function FulfillmentPage({ user }) {
-  const [requests, setRequests] = useState([])
+export default function FulfillmentPage({ session }) {
+  const [items, setItems] = useState([])
+  const [ratings, setRatings] = useState({})
+  const [ownerName, setOwnerName] = useState('')
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [category, setCategory] = useState(ALL_CATEGORIES)
   const [savingId, setSavingId] = useState(null)
+  const [finishing, setFinishing] = useState(false)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
 
-  const loadRequests = useCallback(async () => {
+  const ownerId = session.role === 'shopper' ? session.shops_for_user_id : session.user_id
+
+  const loadItems = useCallback(async () => {
     setLoading(true)
     setError('')
 
-    const { data, error: queryError } = await supabase
-      .from('requests')
-      .select(`
-        id,
-        requester_id,
-        fulfiller_id,
-        notes,
-        status,
-        created_at,
-        claimed_at,
-        fulfilled_at,
-        requester:profiles!requests_requester_id_fkey(display_name, email),
-        items:request_items(
-          id,
-          quantity,
-          is_found,
-          product:products(id, name, price, image_url, brand, unit_qty)
-        )
-      `)
-      .eq('fulfiller_id', user.id)
-      .in('status', ['claimed', 'fulfilled'])
-      .order('updated_at', { ascending: false })
+    const [listRes, ownerRes, ratingsRes] = await Promise.all([
+      fetchShoppingListItems(ownerId),
+      supabase.from('users').select('username').eq('id', ownerId).maybeSingle(),
+      fetchRatingsByOwner(ownerId),
+    ])
 
-    if (queryError) {
-      setError(queryError.message)
-      setRequests([])
+    if (listRes.error) {
+      setError(listRes.error.message)
+      setItems([])
     } else {
-      setRequests(data || [])
+      setItems(listRes.data || [])
     }
 
+    if (!ownerRes.error) setOwnerName(ownerRes.data?.username || '')
+    if (!ratingsRes.error) {
+      const foods = (listRes.data || []).map((item) => item.food).filter(Boolean)
+      setRatings(applyRelatedRatings(foods, ratingsRes.data, ratingsRes.rows))
+    }
     setLoading(false)
-  }, [user.id])
+  }, [ownerId])
 
   useEffect(() => {
-    const timeoutId = setTimeout(loadRequests, 0)
+    const timeoutId = setTimeout(loadItems, 0)
     return () => clearTimeout(timeoutId)
-  }, [loadRequests])
+  }, [loadItems])
 
-  useRealtimeRefresh(`fulfillment-${user.id}`, realtimeTables, loadRequests)
+  useRealtimeRefresh(`fulfillment-legacy-${ownerId}`, realtimeTables, loadItems)
 
-  const toggleFound = async (item) => {
+  const categoryOptions = useMemo(() => buildCategoryOptions(items.map((item) => item.food).filter(Boolean)), [items])
+  const filteredItems = useMemo(() => filterFoodRows(items, { category, search }), [category, items, search])
+  const pending = filteredItems.filter((item) => !item.in_cart)
+  const cartItems = filteredItems.filter((item) => item.in_cart)
+  const allCartItems = items.filter((item) => item.in_cart)
+  const cartCount = allCartItems.reduce((sum, item) => sum + item.quantity, 0)
+  async function setInCart(item, inCart) {
     setSavingId(item.id)
     setError('')
+    setSuccess('')
+    const previousItems = items
+    setItems((current) => current.map((entry) => (entry.id === item.id ? { ...entry, in_cart: inCart } : entry)))
 
-    const { error: updateError } = await supabase
-      .from('request_items')
-      .update({ is_found: !item.is_found })
-      .eq('id', item.id)
-
+    const { error: updateError } = await supabase.from('shopping_list').update({ in_cart: inCart }).eq('id', item.id)
     setSavingId(null)
 
     if (updateError) {
+      setItems(previousItems)
       setError(updateError.message)
       return
     }
 
-    await loadRequests()
+    await loadItems()
   }
 
-  const fulfillRequest = async (requestId) => {
-    setSavingId(requestId)
-    setError('')
+  async function finishShopping() {
+    if (allCartItems.length === 0) return
 
-    const { error: rpcError } = await supabase.rpc('fulfill_request', { p_request_id: requestId })
-    setSavingId(null)
+    setFinishing(true)
+    setError('')
+    setSuccess('')
+
+    const purchasedAt = new Date().toISOString()
+    const cartSnapshot = allCartItems
+    let inventoryBefore
+
+    try {
+      inventoryBefore = await fetchInventoryQuantities(ownerId, cartSnapshot.map((item) => item.food_id))
+    } catch {
+      inventoryBefore = new Map()
+    }
+
+    const { data, error: rpcError } = await supabase.rpc('finish_shopping', {
+      p_shopper_id: session.role === 'shopper' ? session.user_id : ownerId,
+    })
+    setFinishing(false)
 
     if (rpcError) {
       setError(rpcError.message)
       return
     }
 
-    await loadRequests()
+    try {
+      await addMissingInventoryQuantities(ownerId, cartSnapshot, inventoryBefore, purchasedAt)
+    } catch (inventoryError) {
+      setError(inventoryError.message)
+      await loadItems()
+      return
+    }
+
+    setSuccess(`הקניות הסתיימו. עודכנו ${data ?? allCartItems.length} פריטים.`)
+    await loadItems()
+  }
+
+  if (!ownerId) {
+    return (
+      <section className="rounded-2xl bg-white p-6 text-center shadow-sm dark:bg-slate-900">
+        <h2 className="text-2xl font-black">לא משויך בעלים</h2>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">למשתמש הקונה לא מוגדר `shops_for_user_id`.</p>
+      </section>
+    )
   }
 
   return (
-    <section>
-      <div className="mb-5 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-2xl font-bold">איסופים שלי</h2>
-        <p className="mt-1 text-sm text-slate-500">בקשות שלקחתם לאחריות וסימון פריטים בזמן הקניה.</p>
+    <section className="space-y-4">
+      <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
+        <h2 className="text-2xl font-black">קניות עבור {ownerName || 'הבעלים'}</h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">העבירו פריטים לעגלה ואז סיימו את הקניה.</p>
       </div>
 
-      {error ? (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-      ) : null}
+      <FoodFilterBar
+        category={category}
+        categoryOptions={categoryOptions}
+        onCategoryChange={setCategory}
+        onSearchChange={setSearch}
+        placeholder="חיפוש בקניות..."
+        search={search}
+      />
+
+      {error ? <div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div> : null}
+      {success ? <div className="rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{success}</div> : null}
 
       {loading ? (
-        <EmptyState text="טוען איסופים..." />
-      ) : requests.length === 0 ? (
-        <EmptyState text="אין בקשות באיסוף כרגע." />
+        <EmptyState text="טוען רשימת קניות..." />
+      ) : items.length === 0 ? (
+        <EmptyState text="אין פריטים מבוקשים כרגע." />
+      ) : filteredItems.length === 0 ? (
+        <EmptyState text="אין פריטים שמתאימים לסינון הזה." />
       ) : (
-        <div className="space-y-4">
-          {requests.map((request) => (
-            <FulfillmentCard
-              key={request.id}
-              onFulfill={() => fulfillRequest(request.id)}
-              onToggleFound={toggleFound}
-              request={request}
-              savingId={savingId}
-            />
-          ))}
-        </div>
+        <>
+          <ItemSection emptyText="אין פריטים ממתינים." items={pending} onAction={(item) => setInCart(item, true)} pinned ratings={ratings} savingId={savingId} title="מבוקשים" />
+          <ItemSection
+            actionLabel="החזרה"
+            emptyText="העגלה ריקה."
+            inCart
+            items={cartItems}
+            onAction={(item) => setInCart(item, false)}
+            ratings={ratings}
+            savingId={savingId}
+            title="בעגלה"
+          />
+        </>
       )}
+
+      {allCartItems.length > 0 ? (
+        <div className="fixed inset-x-0 bottom-[76px] z-30 px-4">
+          <div className="mx-auto flex max-w-md items-center justify-between gap-3 rounded-2xl bg-rose-700 p-3 text-white shadow-2xl dark:bg-slate-900 dark:ring-1 dark:ring-cyan-400/40">
+            <div>
+              <p className="text-xs text-slate-300">פריטים בעגלה</p>
+              <p className="font-black">{cartCount} פריטים</p>
+            </div>
+            <button
+              className="rounded-xl bg-white px-4 py-3 font-black text-rose-700 disabled:opacity-60 dark:text-indigo-800"
+              disabled={finishing}
+              onClick={finishShopping}
+              type="button"
+            >
+              {finishing ? 'מסיים...' : 'סיום קניה'}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }
 
-function FulfillmentCard({ onFulfill, onToggleFound, request, savingId }) {
-  const isActive = request.status === 'claimed'
-  const foundCount = (request.items || []).filter((item) => item.is_found).length
-  const total = (request.items || []).reduce(
-    (sum, item) => sum + Number(item.product?.price || 0) * item.quantity,
-    0
-  )
+async function addMissingInventoryQuantities(ownerId, cartItems, inventoryBefore, purchasedAt) {
+  const inventoryAfter = await fetchInventoryQuantities(ownerId, cartItems.map((item) => item.food_id))
+  const missing = []
 
-  return (
-    <article className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-slate-100 p-4 md:flex-row md:items-start md:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-sky-100 font-bold text-sky-800">
-            {initialsFor(request.requester)}
-          </div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="font-bold">בקשה של {request.requester?.display_name || request.requester?.email}</h3>
-              <StatusPill status={request.status} />
-            </div>
-            <p className="text-sm text-slate-500">
-              נשלחה {formatDate(request.created_at)} · הערכה {formatCurrency(total)}
-            </p>
-          </div>
-        </div>
-        <div className="text-sm font-bold text-slate-700">
-          {foundCount}/{request.items?.length || 0} סומנו
-        </div>
-      </div>
+  for (const item of cartItems) {
+    const beforeQuantity = inventoryBefore.get(item.food_id) || 0
+    const afterQuantity = inventoryAfter.get(item.food_id) || 0
+    const missingQuantity = Math.max(0, beforeQuantity + Number(item.quantity || 0) - afterQuantity)
 
-      <div className="divide-y divide-slate-100">
-        {(request.items || []).map((item) => (
-          <div className="flex items-center gap-3 p-4" key={item.id}>
-            <ProductThumb product={item.product} />
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold leading-snug">{item.product?.name || 'מוצר נמחק'}</p>
-              <p className="text-sm text-slate-500">
-                {item.product?.brand ? `${item.product.brand} · ` : ''}
-                {item.product?.unit_qty || formatCurrency(item.product?.price)}
-              </p>
-            </div>
-            <span className="rounded-md bg-slate-100 px-2 py-1 text-sm font-bold">x{item.quantity}</span>
-            <button
-              className={`rounded-md px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                item.is_found
-                  ? 'bg-emerald-700 text-white hover:bg-emerald-800'
-                  : 'border border-slate-300 text-slate-700 hover:bg-slate-50'
-              }`}
-              disabled={!isActive || savingId === item.id}
-              onClick={() => onToggleFound(item)}
-              type="button"
-            >
-              {item.is_found ? 'נמצא' : 'סמן נמצא'}
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {request.notes ? (
-        <div className="mx-4 mb-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">{request.notes}</div>
-      ) : null}
-
-      {isActive ? (
-        <div className="flex flex-col gap-3 border-t border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-slate-500">אפשר להשלים גם אם חלק מהפריטים לא נמצאו.</p>
-          <button
-            className="rounded-md bg-emerald-700 px-4 py-2 font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={savingId === request.id}
-            onClick={onFulfill}
-            type="button"
-          >
-            {savingId === request.id ? 'משלים...' : 'סיום איסוף'}
-          </button>
-        </div>
-      ) : null}
-    </article>
-  )
-}
-
-function StatusPill({ status }) {
-  const classes = {
-    claimed: 'bg-sky-100 text-sky-800',
-    fulfilled: 'bg-emerald-100 text-emerald-800',
+    if (missingQuantity > 0) {
+      missing.push({
+        item: { quantity: missingQuantity },
+        food: { id: item.food_id },
+      })
+    }
   }
 
+  if (missing.length > 0) await addInventoryQuantities(ownerId, missing, purchasedAt)
+}
+
+function ItemSection({ actionLabel = 'הוספה', emptyText, inCart = false, items, onAction, pinned = false, ratings, savingId, title }) {
+  const groups = groupRowsByRatingMood(items, ratings)
+
   return (
-    <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${classes[status] || 'bg-slate-100 text-slate-600'}`}>
-      {requestStatusLabels[status] || status}
-    </span>
+    <div className={`space-y-3 ${pinned && items.length > 0 ? 'sticky top-[73px] z-20 rounded-2xl border border-rose-100 bg-orange-50/95 p-2 shadow-xl backdrop-blur dark:border-slate-800 dark:bg-slate-950/95' : ''}`}>
+      <h3 className="px-1 text-sm font-black uppercase tracking-wide text-slate-500">{title}</h3>
+      {items.length === 0 ? <div className="rounded-2xl bg-white p-4 text-center text-sm text-slate-500 dark:bg-slate-900 dark:text-slate-400">{emptyText}</div> : null}
+      {groups.map((group) => (
+        <div className="space-y-2" key={group.key}>
+          <div className={`flex items-center justify-between border-b-2 px-1 pb-1 ${group.underline || 'border-slate-200 dark:border-slate-700'}`}>
+            <h4 className={`text-sm font-black ${group.tone}`}>{group.title}</h4>
+            <span className="text-xs font-black text-slate-400">{group.items.length}</span>
+          </div>
+          {groupItemsByCategory(group.items, (item) => item.food).map((categoryGroup) => (
+            <div className="space-y-2" key={categoryGroup.key}>
+              <CategorySubheading count={categoryGroup.items.length} title={categoryGroup.title} />
+              {categoryGroup.items.map((item) => (
+                <article className={`flex items-center gap-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ${group.ring} dark:bg-slate-900 ${inCart ? 'outline outline-2 outline-cyan-300' : ''}`} key={item.id}>
+                  <FoodThumb food={item.food} />
+                  <div className="min-w-0 flex-1">
+                    <h4 className="line-clamp-2 font-black leading-tight">{item.food?.name || 'מוצר שנמחק'}</h4>
+                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{item.food?.manufacturer || DEFAULT_MANUFACTURER}</p>
+                    <p className="mt-1 text-sm font-black text-rose-700 dark:text-cyan-300">{item.food?.unit_qty || 'יחידת מידה לא צוינה'}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-black">
+                      <span className={`rounded-lg px-2 py-1 ${group.badge}`}>{group.title}</span>
+                      <span className="rounded-lg bg-slate-100 px-2 py-1 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{getFoodCategoryLabel(item.food)}</span>
+                    </div>
+                  </div>
+                  <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-black dark:bg-slate-800">x{item.quantity}</span>
+                  <button
+                    className={`h-11 rounded-xl px-4 font-black disabled:opacity-50 ${
+                      inCart ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200' : 'bg-rose-600 text-white'
+                    }`}
+                    disabled={savingId === item.id}
+                    onClick={() => onAction(item)}
+                    type="button"
+                  >
+                    {actionLabel}
+                  </button>
+                </article>
+              ))}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
   )
 }
 
-function ProductThumb({ product }) {
+function CategorySubheading({ count, title }) {
   return (
-    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100">
-      {product?.image_url ? (
-        <img alt="" className="h-full w-full object-cover" src={product.image_url} />
+    <div className="flex items-center justify-between px-2 pt-1">
+      <h4 className="text-sm font-black text-slate-600 dark:text-slate-300">{title}</h4>
+      <span className="text-xs font-black text-slate-400 dark:text-slate-500">{count}</span>
+    </div>
+  )
+}
+
+function FoodThumb({ food }) {
+  return (
+    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-cyan-100 dark:bg-slate-800">
+      {food?.picture_url ? (
+        <img alt="" className="h-full w-full object-cover" src={food.picture_url} />
       ) : (
-        <span className="font-bold text-slate-400">{product?.name?.slice(0, 1) || '?'}</span>
+        <span className="font-black text-rose-500">{food?.name?.slice(0, 1) || '?'}</span>
       )}
     </div>
   )
 }
 
 function EmptyState({ text }) {
-  return (
-    <div className="rounded-lg border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500">{text}</div>
-  )
+  return <div className="rounded-2xl border border-dashed border-rose-200 bg-white p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">{text}</div>
 }

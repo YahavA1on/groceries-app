@@ -1,44 +1,53 @@
-# Groceries App
+# אפליקציית קניות
 
-Multi-user grocery request board built with React, Vite, Tailwind CSS, and Supabase.
+אפליקציית ווב לטלפון לניהול בקשות קניה, עם React, Vite, Tailwind CSS וטבלאות Supabase הקיימות שלך.
 
-## Setup
+## טבלאות קיימות
 
-1. Install dependencies:
+הגרסה הזו משתמשת בסכמה הנוכחית:
+
+- `users`
+- `sessions`
+- `foods`
+- `shopping_list`
+- `inventory`
+- `purchases`
+- `ratings`
+- `imported_receipts`
+
+אין צורך ליצור את `products`, `requests`, `request_items` או `profiles`.
+
+## הרצה
 
 ```bash
 npm install
+npm run dev
 ```
 
-2. Create `.env`:
+צד הלקוח משתמש במשתנים:
 
 ```bash
 VITE_SUPABASE_URL=your-project-url
 VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 ```
 
-3. Run the SQL in [supabase/schema.sql](supabase/schema.sql) from the Supabase SQL editor.
-
-4. Start the app:
+סקריפט עדכון המוצרים משתמש גם ב:
 
 ```bash
-npm run dev
+SUPABASE_URL=your-project-url
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
-## Catalog Probe
+## עדכון מוצרים מרמי לוי
 
-The Rami Levy probe defaults to dry-run JSON output:
+בדיקה ללא שמירה:
 
 ```bash
 npm run probe-rami-levy -- --query "חלב" --limit 10
 ```
 
-If the current catalog XHR requires an active browser session, capture the endpoint/body/token from the Network tab and pass them with `--endpoint`, `--method`, `--body`, and `--token` or `RAMI_LEVY_TOKEN`.
-
-Only write to Supabase with a server-side service role key:
+שמירה אל `public.foods`:
 
 ```bash
-SUPABASE_URL=your-project-url SUPABASE_SERVICE_ROLE_KEY=your-service-role-key npm run probe-rami-levy -- --upsert
+npm run probe-rami-levy -- --query "חלב" --limit 50 --upsert
 ```
-
-Never expose `SUPABASE_SERVICE_ROLE_KEY` in frontend code or Vite env variables.

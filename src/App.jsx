@@ -1,156 +1,134 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { supabase } from './lib/supabase'
+import { useEffect, useMemo, useState } from 'react'
 import AuthPage from './components/AuthPage'
 import CartProvider from './components/CartProvider'
 import CatalogPage from './components/CatalogPage'
 import FulfillmentPage from './components/FulfillmentPage'
+import InventoryPage from './components/InventoryPage'
 import MyRequestsPage from './components/MyRequestsPage'
-import RequestBoardPage from './components/RequestBoardPage'
+import ReceiptImportPage from './components/ReceiptImportPage'
+import { getCurrentSession, logout } from './lib/auth'
 import { useCart } from './hooks/useCart'
 
-const navItems = [
+const ownerTabs = [
+  { key: 'catalog', label: 'הוספה' },
+  { key: 'my', label: 'בקשות' },
+  { key: 'inventory', label: 'מלאי' },
+]
+
+const shopperTabs = [
+  { key: 'fulfillment', label: 'קניות' },
   { key: 'catalog', label: 'קטלוג' },
-  { key: 'board', label: 'בקשות פתוחות' },
-  { key: 'my', label: 'הבקשות שלי' },
-  { key: 'fulfillment', label: 'איסופים שלי' },
+  { key: 'inventory', label: 'מלאי' },
 ]
 
 export default function App() {
-  const [session, setSession] = useState(undefined)
-  const [profile, setProfile] = useState(null)
-  const [activeTab, setActiveTab] = useState('catalog')
-
-  const loadProfile = useCallback(async (user) => {
-    if (!user) {
-      setProfile(null)
-      return
-    }
-
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, display_name, email')
-      .eq('id', user.id)
-      .maybeSingle()
-
-    if (!error && data) {
-      setProfile(data)
-      return
-    }
-
-    const fallbackName = user.user_metadata?.display_name || user.email?.split('@')[0] || 'משתמש'
-    const fallbackProfile = {
-      id: user.id,
-      display_name: fallbackName,
-      email: user.email,
-    }
-
-    await supabase.from('profiles').upsert(fallbackProfile, { onConflict: 'id' })
-    setProfile(fallbackProfile)
-  }, [])
+  const [session, setSession] = useState(() => getCurrentSession())
+  const [activeTab, setActiveTab] = useState(session?.role === 'shopper' ? 'fulfillment' : 'catalog')
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('groceries_theme') === 'dark')
 
   useEffect(() => {
-    let isActive = true
+    document.documentElement.classList.toggle('dark', darkMode)
+    localStorage.setItem('groceries_theme', darkMode ? 'dark' : 'light')
+  }, [darkMode])
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (!isActive) return
-      const currentSession = data.session ?? null
-      setSession(currentSession)
-      loadProfile(currentSession?.user ?? null)
-    })
-
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession)
-      loadProfile(nextSession?.user ?? null)
-    })
-
-    return () => {
-      isActive = false
-      data.subscription.unsubscribe()
-    }
-  }, [loadProfile])
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
+  async function handleLogout() {
+    await logout()
+    setSession(null)
     setActiveTab('catalog')
   }
 
-  if (session === undefined) {
-    return (
-      <div className="flex min-h-dvh items-center justify-center bg-slate-950 text-slate-100">
-        <div className="rounded-lg border border-white/10 bg-white/5 px-5 py-4 text-sm">טוען...</div>
-      </div>
-    )
-  }
-
-  if (!session) return <AuthPage />
+  if (!session) return <AuthPage onLogin={setSession} />
 
   return (
-    <CartProvider key={session.user.id} userId={session.user.id}>
+    <CartProvider key={session.user_id} userId={session.user_id}>
       <AppShell
         activeTab={activeTab}
+        darkMode={darkMode}
+        onLogout={handleLogout}
         onTabChange={setActiveTab}
-        onSignOut={handleSignOut}
-        profile={profile}
-        user={session.user}
+        onToggleTheme={() => setDarkMode((value) => !value)}
+        session={session}
       />
     </CartProvider>
   )
 }
 
-function AppShell({ activeTab, onTabChange, onSignOut, profile, user }) {
+function AppShell({ activeTab, darkMode, onLogout, onTabChange, onToggleTheme, session }) {
   const { count } = useCart()
-  const displayName = profile?.display_name || user.email
+  const tabs = session.role === 'shopper' ? shopperTabs : ownerTabs
 
   const page = useMemo(() => {
-    if (activeTab === 'board') {
-      return <RequestBoardPage user={user} onClaimed={() => onTabChange('fulfillment')} />
-    }
-    if (activeTab === 'my') return <MyRequestsPage user={user} />
-    if (activeTab === 'fulfillment') return <FulfillmentPage user={user} />
-    return <CatalogPage user={user} onSubmitted={() => onTabChange('my')} />
-  }, [activeTab, onTabChange, user])
+    if (activeTab === 'my') return <MyRequestsPage session={session} />
+    if (activeTab === 'fulfillment') return <FulfillmentPage session={session} />
+    if (activeTab === 'inventory') return <InventoryPage session={session} />
+    if (activeTab === 'receipt') return <ReceiptImportPage session={session} />
+    return <CatalogPage session={session} onSubmitted={() => onTabChange('my')} />
+  }, [activeTab, onTabChange, session])
 
   return (
-    <div className="min-h-dvh bg-slate-100 text-slate-950">
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-3 sm:px-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Groceries</p>
-              <h1 className="text-xl font-bold text-slate-950">שלום {displayName}</h1>
-            </div>
+    <div className="min-h-dvh bg-orange-50 pb-24 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
+      <header className="sticky top-0 z-30 border-b border-rose-100 bg-orange-50/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+        <div className="mx-auto flex max-w-md items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-wide text-rose-700 dark:text-cyan-300">רשימת קניות</p>
+            <h1 className="truncate text-xl font-black">שלום {session.username}</h1>
+          </div>
+          <div className="flex items-center gap-2">
             <button
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
-              onClick={onSignOut}
+              aria-label="סריקת קבלה"
+              className={`flex h-10 w-10 items-center justify-center rounded-xl text-slate-950 transition dark:text-slate-100 ${
+                activeTab === 'receipt'
+                  ? 'bg-rose-600 text-white dark:bg-cyan-400 dark:text-slate-950'
+                  : 'bg-white text-slate-700 dark:bg-slate-800 dark:text-slate-200'
+              }`}
+              onClick={() => onTabChange('receipt')}
+              title="סריקת קבלה"
               type="button"
             >
+              <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.4" viewBox="0 0 24 24">
+                <path d="M3 4h2l2.3 11.4a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 1.9-1.4L21 8H7" />
+                <path d="M10 21h.01" />
+                <path d="M18 21h.01" />
+              </svg>
+            </button>
+            <button
+              className="h-10 min-w-10 rounded-xl bg-indigo-100 px-3 text-lg font-black text-indigo-950 dark:bg-indigo-500/20 dark:text-indigo-100"
+              onClick={onToggleTheme}
+              title={darkMode ? 'מצב בהיר' : 'מצב כהה'}
+              type="button"
+            >
+              {darkMode ? '☀' : '☾'}
+            </button>
+            <button className="h-10 rounded-xl bg-rose-100 px-3 text-sm font-bold text-rose-800 dark:bg-rose-500/20 dark:text-rose-100" onClick={onLogout} type="button">
               יציאה
             </button>
           </div>
-
-          <nav className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            {navItems.map((item) => (
-              <button
-                className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
-                  activeTab === item.key
-                    ? 'bg-emerald-700 text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-                key={item.key}
-                onClick={() => onTabChange(item.key)}
-                type="button"
-              >
-                {item.label}
-                {item.key === 'catalog' && count > 0 ? (
-                  <span className="me-2 rounded-full bg-white/20 px-2 py-0.5 text-xs">{count}</span>
-                ) : null}
-              </button>
-            ))}
-          </nav>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{page}</main>
+      <main className="mx-auto max-w-md px-4 py-4">{page}</main>
+
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-rose-100 bg-orange-50/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+        <div className={`mx-auto grid max-w-md gap-2 ${tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+          {tabs.map((tab) => (
+            <button
+              className={`relative rounded-2xl px-2 py-3 text-sm font-black transition active:scale-[0.98] ${
+                activeTab === tab.key
+                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/20 dark:bg-cyan-400 dark:text-slate-950'
+                  : 'bg-white text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+              }`}
+              key={tab.key}
+              onClick={() => onTabChange(tab.key)}
+              type="button"
+            >
+              {tab.label}
+              {tab.key === 'catalog' && count > 0 ? (
+                <span className="absolute -top-1 end-2 rounded-full bg-cyan-300 px-2 py-0.5 text-xs text-slate-950">{count}</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      </nav>
     </div>
   )
 }

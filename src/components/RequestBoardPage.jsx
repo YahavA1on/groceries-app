@@ -1,97 +1,70 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { formatCurrency, formatDate, initialsFor } from '../lib/format'
+import { formatDate } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
 
-const realtimeTables = ['requests', 'request_items']
+const realtimeTables = ['shopping_list']
 
-export default function RequestBoardPage({ onClaimed, user }) {
-  const [requests, setRequests] = useState([])
+export default function RequestBoardPage({ onStartShopping, session }) {
+  const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
-  const [claimingId, setClaimingId] = useState(null)
   const [error, setError] = useState('')
 
-  const loadRequests = useCallback(async () => {
+  const loadRows = useCallback(async () => {
     setLoading(true)
     setError('')
 
     const { data, error: queryError } = await supabase
-      .from('requests')
-      .select(`
-        id,
-        requester_id,
-        notes,
-        status,
-        created_at,
-        requester:profiles!requests_requester_id_fkey(display_name, email),
-        items:request_items(
-          id,
-          quantity,
-          is_found,
-          product:products(id, name, price, image_url, brand, unit_qty)
-        )
-      `)
-      .eq('status', 'pending')
-      .neq('requester_id', user.id)
-      .order('created_at', { ascending: false })
+      .from('shopping_list')
+      .select('id, owner_id, food_id, quantity, in_cart, added_at, owner:users!shopping_list_owner_id_fkey(id, username), food:foods(id, name, manufacturer, unit_qty, picture_url)')
+      .eq('in_cart', false)
+      .order('added_at', { ascending: false })
 
     if (queryError) {
       setError(queryError.message)
-      setRequests([])
+      setRows([])
     } else {
-      setRequests(data || [])
+      setRows((data || []).filter((row) => row.owner_id !== session.user_id))
     }
 
     setLoading(false)
-  }, [user.id])
+  }, [session.user_id])
 
   useEffect(() => {
-    const timeoutId = setTimeout(loadRequests, 0)
+    const timeoutId = setTimeout(loadRows, 0)
     return () => clearTimeout(timeoutId)
-  }, [loadRequests])
+  }, [loadRows])
 
-  useRealtimeRefresh(`request-board-${user.id}`, realtimeTables, loadRequests)
+  useRealtimeRefresh(`request-board-legacy-${session.user_id}`, realtimeTables, loadRows)
 
-  const handleClaim = async (requestId) => {
-    setClaimingId(requestId)
-    setError('')
-
-    const { error: claimError } = await supabase.rpc('claim_request', { p_request_id: requestId })
-    setClaimingId(null)
-
-    if (claimError) {
-      setError(claimError.message)
-      await loadRequests()
-      return
+  const groups = useMemo(() => {
+    const map = new Map()
+    for (const row of rows) {
+      const key = row.owner_id
+      const group = map.get(key) || { owner: row.owner, items: [] }
+      group.items.push(row)
+      map.set(key, group)
     }
-
-    onClaimed?.()
-  }
+    return Array.from(map.values())
+  }, [rows])
 
   return (
-    <section>
-      <div className="mb-5 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-2xl font-bold">בקשות פתוחות</h2>
-        <p className="mt-1 text-sm text-slate-500">בקשות של משתמשים אחרים שממתינות לאיסוף.</p>
+    <section className="space-y-4">
+      <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
+        <h2 className="text-2xl font-black">לוח בקשות</h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">בקשות פתוחות של משתמשים אחרים. החדשות מוצמדות למעלה.</p>
       </div>
 
-      {error ? (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-      ) : null}
+      {error ? <div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div> : null}
 
       {loading ? (
-        <EmptyState text="טוען בקשות..." />
-      ) : requests.length === 0 ? (
-        <EmptyState text="אין כרגע בקשות פתוחות של משתמשים אחרים." />
+        <EmptyState text="טוען לוח בקשות..." />
+      ) : groups.length === 0 ? (
+        <EmptyState text="אין כרגע בקשות פתוחות." />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {requests.map((request) => (
-            <OpenRequestCard
-              claiming={claimingId === request.id}
-              key={request.id}
-              onClaim={() => handleClaim(request.id)}
-              request={request}
-            />
+        <div className="space-y-4">
+          {groups.map((group) => (
+            <OwnerGroup group={group} key={group.owner?.id || group.items[0]?.owner_id} onStartShopping={onStartShopping} session={session} />
           ))}
         </div>
       )}
@@ -99,80 +72,53 @@ export default function RequestBoardPage({ onClaimed, user }) {
   )
 }
 
-function OpenRequestCard({ claiming, onClaim, request }) {
-  const total = useMemo(
-    () =>
-      (request.items || []).reduce(
-        (sum, item) => sum + Number(item.product?.price || 0) * item.quantity,
-        0
-      ),
-    [request.items]
-  )
+function OwnerGroup({ group, onStartShopping, session }) {
+  const canShopThisOwner = session.role === 'shopper' && session.shops_for_user_id === group.owner?.id
 
   return (
-    <article className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 font-bold text-emerald-800">
-            {initialsFor(request.requester)}
-          </div>
-          <div className="min-w-0">
-            <h3 className="truncate font-bold">{request.requester?.display_name || request.requester?.email}</h3>
-            <p className="text-sm text-slate-500">{formatDate(request.created_at)}</p>
-          </div>
+    <article className="overflow-hidden rounded-2xl bg-white shadow-sm dark:bg-slate-900">
+      <div className="flex items-center justify-between gap-3 border-b border-rose-100 p-4 dark:border-slate-800">
+        <div>
+          <h3 className="text-lg font-black">{group.owner?.username || 'משתמש לא ידוע'}</h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {group.items.length} מוצרים
+          </p>
         </div>
-        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">פתוחה</span>
+        {canShopThisOwner ? (
+          <button className="rounded-xl bg-rose-600 px-4 py-3 font-black text-white dark:bg-cyan-400 dark:text-slate-950" onClick={onStartShopping} type="button">
+            קניות
+          </button>
+        ) : null}
       </div>
-
-      <div className="space-y-3 p-4">
-        {(request.items || []).map((item) => (
-          <div className="flex items-center gap-3" key={item.id}>
-            <ProductThumb product={item.product} />
+      <div className="divide-y divide-rose-50 dark:divide-slate-800">
+        {group.items.map((item) => (
+          <div className="flex items-center gap-3 p-3" key={item.id}>
+            <FoodThumb food={item.food} />
             <div className="min-w-0 flex-1">
-              <p className="font-semibold leading-snug">{item.product?.name || 'מוצר נמחק'}</p>
-              <p className="text-sm text-slate-500">
-                {item.product?.brand ? `${item.product.brand} · ` : ''}
-                {item.product?.unit_qty || formatCurrency(item.product?.price)}
-              </p>
+              <p className="line-clamp-2 font-black leading-tight">{item.food?.name || 'מוצר שנמחק'}</p>
+              <p className="mt-1 text-sm font-black text-rose-700 dark:text-cyan-300">{item.food?.unit_qty || 'יחידת מידה לא צוינה'}</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{formatDate(item.added_at)}</p>
             </div>
-            <strong className="rounded-md bg-slate-100 px-2 py-1 text-sm">x{item.quantity}</strong>
+            <span className="rounded-xl bg-cyan-100 px-3 py-2 text-sm font-black text-cyan-950 dark:bg-cyan-400 dark:text-slate-950">x{item.quantity}</span>
           </div>
         ))}
-      </div>
-
-      {request.notes ? (
-        <div className="mx-4 mb-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">{request.notes}</div>
-      ) : null}
-
-      <div className="flex items-center justify-between gap-3 border-t border-slate-100 p-4">
-        <span className="text-sm text-slate-500">הערכה: {formatCurrency(total)}</span>
-        <button
-          className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={claiming}
-          onClick={onClaim}
-          type="button"
-        >
-          {claiming ? 'תופס בקשה...' : 'לקחת לאיסוף'}
-        </button>
       </div>
     </article>
   )
 }
 
-function ProductThumb({ product }) {
+function FoodThumb({ food }) {
   return (
-    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100">
-      {product?.image_url ? (
-        <img alt="" className="h-full w-full object-cover" src={product.image_url} />
+    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-cyan-100 dark:bg-slate-800">
+      {food?.picture_url ? (
+        <img alt="" className="h-full w-full object-cover" src={food.picture_url} />
       ) : (
-        <span className="font-bold text-slate-400">{product?.name?.slice(0, 1) || '?'}</span>
+        <span className="font-black text-rose-500">{food?.name?.slice(0, 1) || '?'}</span>
       )}
     </div>
   )
 }
 
 function EmptyState({ text }) {
-  return (
-    <div className="rounded-lg border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500">{text}</div>
-  )
+  return <div className="rounded-2xl border border-dashed border-rose-200 bg-white p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">{text}</div>
 }

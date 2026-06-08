@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 
 const DEFAULT_ENDPOINT = 'https://www.rami-levy.co.il/api/catalog'
-const SOURCE_NAME = 'rami-levy'
+const SOURCE_NAME = 'rami_levy'
 const DEFAULT_STORE = '331'
 
 function parseArgs(argv) {
@@ -195,52 +195,48 @@ function mapProduct(record) {
   if (!externalId || !name) return null
 
   return {
+    source: SOURCE_NAME,
     external_id: String(externalId),
-    barcode: barcode ? String(barcode) : null,
     name: String(name).trim(),
-    price: asNumber(firstValue(record, ['price', 'finalPrice', 'final_price', 'salePrice', 'itemPrice'])),
-    image_url: normalizeImageUrl(
-      firstValue(record, ['image', 'imageUrl', 'image_url', 'pic', 'picture', 'img']) ||
-        firstValue(record.images, ['small', 'original', 'trim', 'transparent'])
-    ),
-    category: textValue(
-      firstValue(record, ['category', 'categoryName', 'category_name', 'department', 'departmentName']),
-      ['name', 'title']
-    ),
-    brand: textValue(
+    manufacturer: textValue(
       firstValue(record, ['brand', 'brandName', 'brand_name', 'manufacturer', 'supplierName']) ||
         firstValue(record.gs, ['BrandName']),
       ['name', 'title']
     ),
+    price: asNumber(firstValue(record, ['price', 'finalPrice', 'final_price', 'salePrice', 'itemPrice'])),
     unit_qty:
       textValue(firstValue(record, ['unitQty', 'unit_qty', 'unit', 'size', 'weight', 'measure']), ['text', 'name']) ||
       textValue(firstValue(record.gs, ['Net_Content']), ['text']),
-    source: SOURCE_NAME,
-    source_payload: record,
-    last_updated: new Date().toISOString(),
+    picture_url: normalizeImageUrl(
+      firstValue(record, ['image', 'imageUrl', 'image_url', 'pic', 'picture', 'img']) ||
+        firstValue(record.images, ['small', 'original', 'trim', 'transparent'])
+    ),
+    store_id: String(firstValue(record, ['store_id', 'storeId', 'store']) || DEFAULT_STORE),
+    raw: record,
+    updated_at: new Date().toISOString(),
   }
 }
 
-async function upsertProducts(products) {
+async function upsertFoods(foods) {
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
   if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to upsert products.')
+    throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to upsert foods.')
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
   })
 
-  const { error } = await supabase.from('products').upsert(products, {
-    onConflict: 'external_id',
+  const { error } = await supabase.from('foods').upsert(foods, {
+    onConflict: 'source,external_id',
   })
 
   if (error) {
-    if (error.message?.includes("Could not find the table 'public.products'")) {
+    if (error.message?.includes("Could not find the table 'public.foods'")) {
       throw new Error(
-        "Supabase is missing public.products. Run supabase/schema.sql in the Supabase SQL editor for the project in VITE_SUPABASE_URL, then run: notify pgrst, 'reload schema';",
+        "Supabase is missing public.foods. Make sure VITE_SUPABASE_URL points to your existing groceries project.",
         { cause: error }
       )
     }
@@ -263,8 +259,8 @@ async function main() {
   }
 
   if (options.upsert) {
-    await upsertProducts(mapped)
-    console.log(`Upserted ${mapped.length} products into public.products.`)
+    await upsertFoods(mapped)
+    console.log(`Upserted ${mapped.length} foods into public.foods.`)
     return
   }
 

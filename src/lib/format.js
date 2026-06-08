@@ -5,15 +5,6 @@ export const requestStatusLabels = {
   cancelled: 'בוטלה',
 }
 
-export function formatCurrency(value) {
-  if (value == null) return ''
-  return new Intl.NumberFormat('he-IL', {
-    style: 'currency',
-    currency: 'ILS',
-    maximumFractionDigits: 2,
-  }).format(Number(value))
-}
-
 export function formatDate(value) {
   if (!value) return ''
   return new Intl.DateTimeFormat('he-IL', {

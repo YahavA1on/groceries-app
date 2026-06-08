@@ -1,88 +1,65 @@
-import { useCallback, useEffect, useState } from 'react'
-import { formatCurrency, formatDate, requestStatusLabels } from '../lib/format'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import FoodFilterBar from './FoodFilterBar'
+import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchRatingsByOwner, fetchShoppingListItems } from '../lib/foodData'
+import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupRowsByRank } from '../lib/foodFilters'
 import { supabase } from '../lib/supabase'
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
 
-const realtimeTables = ['requests', 'request_items']
+const realtimeTables = ['shopping_list', 'ratings']
 
-export default function MyRequestsPage({ user }) {
-  const [requests, setRequests] = useState([])
+export default function MyRequestsPage({ session }) {
+  const [items, setItems] = useState([])
+  const [ratings, setRatings] = useState({})
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [category, setCategory] = useState(ALL_CATEGORIES)
   const [savingId, setSavingId] = useState(null)
   const [error, setError] = useState('')
 
-  const loadRequests = useCallback(async () => {
+  const loadItems = useCallback(async () => {
     setLoading(true)
     setError('')
 
-    const { data, error: queryError } = await supabase
-      .from('requests')
-      .select(`
-        id,
-        requester_id,
-        fulfiller_id,
-        notes,
-        status,
-        created_at,
-        claimed_at,
-        fulfilled_at,
-        fulfiller:profiles!requests_fulfiller_id_fkey(display_name, email),
-        items:request_items(
-          id,
-          quantity,
-          is_found,
-          product:products(id, name, price, image_url, brand, unit_qty)
-        )
-      `)
-      .eq('requester_id', user.id)
-      .order('created_at', { ascending: false })
+    const [itemsResult, ratingsResult] = await Promise.all([
+      fetchShoppingListItems(session.user_id),
+      fetchRatingsByOwner(session.user_id),
+    ])
 
-    if (queryError) {
-      setError(queryError.message)
-      setRequests([])
+    if (itemsResult.error) {
+      setError(itemsResult.error.message)
+      setItems([])
     } else {
-      setRequests(data || [])
+      setItems(itemsResult.data || [])
     }
 
+    if (!ratingsResult.error) {
+      const foods = (itemsResult.data || []).map((item) => item.food).filter(Boolean)
+      setRatings(applyRelatedRatings(foods, ratingsResult.data, ratingsResult.rows))
+    }
     setLoading(false)
-  }, [user.id])
+  }, [session.user_id])
 
   useEffect(() => {
-    const timeoutId = setTimeout(loadRequests, 0)
+    const timeoutId = setTimeout(loadItems, 0)
     return () => clearTimeout(timeoutId)
-  }, [loadRequests])
+  }, [loadItems])
 
-  useRealtimeRefresh(`my-requests-${user.id}`, realtimeTables, loadRequests)
+  useRealtimeRefresh(`my-shopping-list-${session.user_id}`, realtimeTables, loadItems)
 
-  const cancelRequest = async (requestId) => {
-    setSavingId(requestId)
-    setError('')
+  const categoryOptions = useMemo(() => buildCategoryOptions(items.map((item) => item.food).filter(Boolean)), [items])
+  const filteredItems = useMemo(() => filterFoodRows(items, { category, search }), [category, items, search])
+  const pending = filteredItems.filter((item) => !item.in_cart)
+  const inCart = filteredItems.filter((item) => item.in_cart)
 
-    const { error: updateError } = await supabase
-      .from('requests')
-      .update({ status: 'cancelled' })
-      .eq('id', requestId)
-      .eq('requester_id', user.id)
-
-    setSavingId(null)
-
-    if (updateError) {
-      setError(updateError.message)
-      return
-    }
-
-    await loadRequests()
-  }
-
-  const changeItemQuantity = async (requestId, item, delta) => {
+  async function changeQuantity(item, delta) {
     setSavingId(item.id)
     setError('')
 
     const nextQuantity = item.quantity + delta
     const result =
       nextQuantity <= 0
-        ? await supabase.from('request_items').delete().eq('id', item.id)
-        : await supabase.from('request_items').update({ quantity: nextQuantity }).eq('id', item.id)
+        ? await supabase.from('shopping_list').delete().eq('id', item.id)
+        : await supabase.from('shopping_list').update({ quantity: nextQuantity }).eq('id', item.id)
 
     setSavingId(null)
 
@@ -91,169 +68,150 @@ export default function MyRequestsPage({ user }) {
       return
     }
 
-    const request = requests.find((entry) => entry.id === requestId)
-    if (nextQuantity <= 0 && request?.items?.length === 1) {
-      await cancelRequest(requestId)
+    await loadItems()
+  }
+
+  async function removeItem(item) {
+    setSavingId(item.id)
+    setError('')
+
+    const { error: deleteError } = await supabase.from('shopping_list').delete().eq('id', item.id)
+    setSavingId(null)
+
+    if (deleteError) {
+      setError(deleteError.message)
       return
     }
 
-    await loadRequests()
+    await loadItems()
   }
 
   return (
-    <section>
-      <div className="mb-5 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-2xl font-bold">הבקשות שלי</h2>
-        <p className="mt-1 text-sm text-slate-500">מעקב וניהול בקשות ששלחתם.</p>
+    <section className="space-y-4">
+      <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
+        <h2 className="text-2xl font-black">הבקשות שלי</h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">פריטים שממתינים לקונה ופריטים שכבר נכנסו לעגלה.</p>
       </div>
 
-      {error ? (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-      ) : null}
+      <FoodFilterBar
+        category={category}
+        categoryOptions={categoryOptions}
+        onCategoryChange={setCategory}
+        onSearchChange={setSearch}
+        placeholder="חיפוש בבקשות..."
+        search={search}
+      />
+
+      {error ? <div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div> : null}
 
       {loading ? (
         <EmptyState text="טוען בקשות..." />
-      ) : requests.length === 0 ? (
-        <EmptyState text="עוד לא שלחתם בקשות." />
+      ) : items.length === 0 ? (
+        <EmptyState text="עוד אין בקשות." />
+      ) : filteredItems.length === 0 ? (
+        <EmptyState text="אין בקשות שמתאימות לסינון הזה." />
       ) : (
-        <div className="space-y-4">
-          {requests.map((request) => (
-            <RequestCard
-              key={request.id}
-              onCancel={() => cancelRequest(request.id)}
-              onQuantityChange={(item, delta) => changeItemQuantity(request.id, item, delta)}
-              request={request}
-              savingId={savingId}
-            />
-          ))}
-        </div>
+        <>
+          <RequestSection
+            editable
+            items={pending}
+            onChangeQuantity={changeQuantity}
+            onRemove={removeItem}
+            pinned
+            ratings={ratings}
+            savingId={savingId}
+            title="ממתין לקונה"
+          />
+          <RequestSection items={inCart} ratings={ratings} savingId={savingId} title="בעגלת הקונה" />
+        </>
       )}
     </section>
   )
 }
 
-function RequestCard({ onCancel, onQuantityChange, request, savingId }) {
-  const canEdit = request.status === 'pending'
-  const total = (request.items || []).reduce(
-    (sum, item) => sum + Number(item.product?.price || 0) * item.quantity,
-    0
-  )
+function RequestSection({ editable = false, items, onChangeQuantity, onRemove, pinned = false, ratings, savingId, title }) {
+  if (items.length === 0) return null
+
+  const groups = groupRowsByRank(items, ratings)
 
   return (
-    <article className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-slate-100 p-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-lg font-bold">בקשה מ-{formatDate(request.created_at)}</h3>
-            <StatusPill status={request.status} />
-          </div>
-          <p className="mt-1 text-sm text-slate-500">
-            {request.fulfiller
-              ? `נאספה על ידי ${request.fulfiller.display_name || request.fulfiller.email}`
-              : 'ממתינה למשתמש שייקח את הבקשה'}
-          </p>
-        </div>
-        <div className="text-sm font-semibold text-slate-700">הערכה: {formatCurrency(total)}</div>
+    <div className={`space-y-3 ${pinned ? 'sticky top-[73px] z-20 rounded-2xl border border-rose-100 bg-orange-50/95 p-2 shadow-xl backdrop-blur dark:border-slate-800 dark:bg-slate-950/95' : ''}`}>
+      <div className="flex items-center justify-between px-1">
+        <h3 className="text-sm font-black uppercase tracking-wide text-slate-500">{title}</h3>
+        <span className="text-sm font-black text-rose-700 dark:text-cyan-300">{items.length} מוצרים</span>
       </div>
-
-      <div className="divide-y divide-slate-100">
-        {(request.items || []).map((item) => (
-          <div className="flex items-center gap-3 p-4" key={item.id}>
-            <ProductThumb product={item.product} />
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold leading-snug">{item.product?.name || 'מוצר נמחק'}</p>
-              <p className="text-sm text-slate-500">
-                {item.product?.brand ? `${item.product.brand} · ` : ''}
-                {item.product?.unit_qty || formatCurrency(item.product?.price)}
-              </p>
-            </div>
-            {canEdit ? (
-              <div className="inline-flex items-center rounded-md border border-slate-300">
+      {groups.map((group) => (
+        <div className="space-y-2" key={group.key}>
+          <div className="flex items-center justify-between px-1">
+            <h4 className={`text-sm font-black ${group.tone}`}>{group.title}</h4>
+            <span className="text-xs font-black text-slate-400">{group.items.length}</span>
+          </div>
+          {group.items.map((item) => (
+            <article className={`rounded-2xl bg-white p-3 shadow-sm ring-1 ${group.ring} dark:bg-slate-900`} key={item.id}>
+              <div className="flex items-center gap-3">
+                <FoodThumb food={item.food} />
+                <div className="min-w-0 flex-1">
+                  <h4 className="line-clamp-2 font-black leading-tight">{item.food?.name || 'מוצר שנמחק'}</h4>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{item.food?.manufacturer || DEFAULT_MANUFACTURER}</p>
+                  <p className="mt-1 text-sm font-black text-rose-700 dark:text-cyan-300">{item.food?.unit_qty || 'יחידת מידה לא צוינה'}</p>
+                  <span className="mt-2 inline-flex rounded-lg bg-slate-100 px-2 py-1 text-xs font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">{getFoodCategoryLabel(item.food)}</span>
+                </div>
+                {editable ? (
+                  <div className="flex items-center rounded-xl border border-rose-200 dark:border-slate-700">
+                    <button
+                      className="h-10 w-10 text-xl font-black disabled:opacity-50"
+                      disabled={savingId === item.id}
+                      onClick={() => onChangeQuantity(item, -1)}
+                      type="button"
+                    >
+                      -
+                    </button>
+                    <span className="min-w-7 text-center font-black">{item.quantity}</span>
+                    <button
+                      className="h-10 w-10 text-xl font-black disabled:opacity-50"
+                      disabled={savingId === item.id}
+                      onClick={() => onChangeQuantity(item, 1)}
+                      type="button"
+                    >
+                      +
+                    </button>
+                  </div>
+                ) : (
+                  <span className="rounded-xl bg-cyan-100 px-3 py-2 text-sm font-black text-cyan-950 dark:bg-cyan-400 dark:text-slate-950">x{item.quantity}</span>
+                )}
+              </div>
+              {editable ? (
                 <button
-                  className="h-9 w-9 text-lg font-bold transition hover:bg-slate-100 disabled:opacity-50"
+                  aria-label={`הסרת ${item.food?.name || 'מוצר'}`}
+                  className="mt-3 flex h-10 w-full items-center justify-center rounded-xl bg-rose-50 text-lg font-black text-rose-700 disabled:opacity-50 dark:bg-rose-500/10 dark:text-rose-200"
                   disabled={savingId === item.id}
-                  onClick={() => onQuantityChange(item, -1)}
+                  onClick={() => onRemove(item)}
+                  title="הסרה"
                   type="button"
                 >
-                  -
+                  🗑
                 </button>
-                <span className="min-w-9 text-center text-sm font-bold">{item.quantity}</span>
-                <button
-                  className="h-9 w-9 text-lg font-bold transition hover:bg-slate-100 disabled:opacity-50"
-                  disabled={savingId === item.id}
-                  onClick={() => onQuantityChange(item, 1)}
-                  type="button"
-                >
-                  +
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span className="rounded-md bg-slate-100 px-2 py-1 text-sm font-bold">x{item.quantity}</span>
-                {request.status !== 'pending' ? (
-                  <span
-                    className={`rounded-full px-2 py-1 text-xs font-bold ${
-                      item.is_found ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
-                    }`}
-                  >
-                    {item.is_found ? 'נמצא' : 'לא סומן'}
-                  </span>
-                ) : null}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {request.notes ? (
-        <div className="mx-4 mb-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">{request.notes}</div>
-      ) : null}
-
-      {canEdit ? (
-        <div className="border-t border-slate-100 p-4">
-          <button
-            className="rounded-md border border-red-200 px-3 py-2 text-sm font-bold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={savingId === request.id}
-            onClick={onCancel}
-            type="button"
-          >
-            ביטול בקשה
-          </button>
+              ) : null}
+            </article>
+          ))}
         </div>
-      ) : null}
-    </article>
+      ))}
+    </div>
   )
 }
 
-function StatusPill({ status }) {
-  const classes = {
-    pending: 'bg-amber-100 text-amber-800',
-    claimed: 'bg-sky-100 text-sky-800',
-    fulfilled: 'bg-emerald-100 text-emerald-800',
-    cancelled: 'bg-slate-100 text-slate-600',
-  }
-
+function FoodThumb({ food }) {
   return (
-    <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${classes[status] || classes.pending}`}>
-      {requestStatusLabels[status] || status}
-    </span>
-  )
-}
-
-function ProductThumb({ product }) {
-  return (
-    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100">
-      {product?.image_url ? (
-        <img alt="" className="h-full w-full object-cover" src={product.image_url} />
+    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-cyan-100 dark:bg-slate-800">
+      {food?.picture_url ? (
+        <img alt="" className="h-full w-full object-cover" src={food.picture_url} />
       ) : (
-        <span className="font-bold text-slate-400">{product?.name?.slice(0, 1) || '?'}</span>
+        <span className="font-black text-rose-500">{food?.name?.slice(0, 1) || '?'}</span>
       )}
     </div>
   )
 }
 
 function EmptyState({ text }) {
-  return (
-    <div className="rounded-lg border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500">{text}</div>
-  )
+  return <div className="rounded-2xl border border-dashed border-rose-200 bg-white p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">{text}</div>
 }
