@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
+import TopNotice from './TopNotice'
 import { DEFAULT_MANUFACTURER, addInventoryQuantities, applyRelatedRatings, fetchInventoryQuantities, fetchRatingsByOwner, fetchShoppingListItems } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRatingMood } from '../lib/foodFilters'
 import { supabase } from '../lib/supabase'
@@ -128,6 +129,14 @@ export default function FulfillmentPage({ session }) {
 
   return (
     <section className="space-y-4">
+      <TopNotice
+        notice={error ? { tone: 'error', text: error } : success ? { tone: 'success', text: success } : null}
+        onDismiss={() => {
+          setError('')
+          setSuccess('')
+        }}
+      />
+
       <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
         <h2 className="text-2xl font-black">קניות עבור {ownerName || 'הבעלים'}</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">העבירו פריטים לעגלה ואז סיימו את הקניה.</p>
@@ -141,9 +150,6 @@ export default function FulfillmentPage({ session }) {
         placeholder="חיפוש בקניות..."
         search={search}
       />
-
-      {error ? <div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div> : null}
-      {success ? <div className="rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{success}</div> : null}
 
       {loading ? (
         <EmptyState text="טוען רשימת קניות..." />

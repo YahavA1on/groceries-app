@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import TopNotice from './TopNotice'
 import { formatDate } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
@@ -50,12 +51,12 @@ export default function RequestBoardPage({ onStartShopping, session }) {
 
   return (
     <section className="space-y-4">
+      <TopNotice notice={error ? { tone: 'error', text: error } : null} onDismiss={() => setError('')} />
+
       <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
         <h2 className="text-2xl font-black">לוח בקשות</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">בקשות פתוחות של משתמשים אחרים. החדשות מוצמדות למעלה.</p>
       </div>
-
-      {error ? <div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div> : null}
 
       {loading ? (
         <EmptyState text="טוען לוח בקשות..." />

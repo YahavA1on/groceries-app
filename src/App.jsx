@@ -66,7 +66,7 @@ function AppShell({ activeTab, darkMode, onLogout, onTabChange, onToggleTheme, s
   }, [activeTab, onTabChange, session])
 
   return (
-    <div className="min-h-dvh bg-orange-50 pb-24 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
+    <div className="min-h-dvh bg-orange-50 pb-28 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
       <header className="sticky top-0 z-30 border-b border-rose-100 bg-orange-50/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
         <div className="mx-auto flex max-w-md items-center justify-between gap-3">
           <div className="min-w-0">
@@ -108,25 +108,27 @@ function AppShell({ activeTab, darkMode, onLogout, onTabChange, onToggleTheme, s
 
       <main className="mx-auto max-w-md px-4 py-4">{page}</main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-rose-100 bg-orange-50/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
-        <div className={`mx-auto grid max-w-md gap-2 ${tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
-          {tabs.map((tab) => (
-            <button
-              className={`relative rounded-2xl px-2 py-3 text-sm font-black transition active:scale-[0.98] ${
-                activeTab === tab.key
-                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/20 dark:bg-cyan-400 dark:text-slate-950'
-                  : 'bg-white text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-              }`}
-              key={tab.key}
-              onClick={() => onTabChange(tab.key)}
-              type="button"
-            >
-              {tab.label}
-              {tab.key === 'catalog' && count > 0 ? (
-                <span className="absolute -top-1 end-2 rounded-full bg-cyan-300 px-2 py-0.5 text-xs text-slate-950">{count}</span>
-              ) : null}
-            </button>
-          ))}
+      <nav aria-label="Main navigation">
+        <div className="fixed inset-x-0 bottom-0 z-50 border-t border-rose-100 bg-orange-50/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+          <div className={`mx-auto grid max-w-md gap-2 ${tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+            {tabs.map((tab) => (
+              <button
+                className={`relative rounded-2xl px-2 py-3 text-sm font-black transition active:scale-[0.98] ${
+                  activeTab === tab.key
+                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/20 dark:bg-cyan-400 dark:text-slate-950'
+                    : 'bg-white text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                }`}
+                key={tab.key}
+                onClick={() => onTabChange(tab.key)}
+                type="button"
+              >
+                {tab.label}
+                {tab.key === 'catalog' && count > 0 ? (
+                  <span className="absolute -top-1 end-2 rounded-full bg-cyan-300 px-2 py-0.5 text-xs text-slate-950">{count}</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
         </div>
       </nav>
     </div>

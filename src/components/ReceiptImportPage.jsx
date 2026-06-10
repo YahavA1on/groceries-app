@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import TopNotice from './TopNotice'
 import { DEFAULT_MANUFACTURER, addInventoryQuantities } from '../lib/foodData'
 import { buildFoodInsert, fetchReceiptText, parseReceiptItems } from '../lib/receiptImport'
 import { supabase } from '../lib/supabase'
@@ -60,6 +61,14 @@ export default function ReceiptImportPage({ session }) {
 
   return (
     <section className="space-y-4">
+      <TopNotice
+        notice={error ? { tone: 'error', text: error } : success ? { tone: 'success', text: success } : null}
+        onDismiss={() => {
+          setError('')
+          setSuccess('')
+        }}
+      />
+
       <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
         <h2 className="text-2xl font-black">סריקת קבלה</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -101,9 +110,6 @@ export default function ReceiptImportPage({ session }) {
           {loading ? 'סורק...' : 'סריקת קבלה'}
         </button>
       </div>
-
-      {error ? <div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700 dark:bg-red-500/10 dark:text-red-200">{error}</div> : null}
-      {success ? <div className="rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200">{success}</div> : null}
 
       {items.length > 0 ? (
         <div className="sticky top-[73px] z-20 space-y-3 rounded-2xl border border-rose-100 bg-orange-50/95 p-2 shadow-xl backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">

@@ -60,7 +60,7 @@ const categoryDefinitions = [
   {
     value: 'בשר ודגים',
     icon: '🥩',
-    keywords: ['בשר', 'עוף', 'חזה עוף', 'הודו', 'דג', 'דגים', 'סלמון', 'טונה', 'נקניק', 'פרגית'],
+    keywords: ['בשר', 'עוף', 'חזה עוף', 'הודו', 'דג', 'דגים', 'סלמון', 'טונה', 'נקניק', 'פרגית', 'סטייק', 'אנטריקוט'],
     priority: 20,
   },
   {
@@ -161,6 +161,7 @@ const categoryDefinitions = [
 
 const explicitCategoryAliases = new Map([
   ['ירקות ופירות', 'פירות וירקות'],
+  ['בשר', 'בשר ודגים'],
   ['חלב וביצים', 'חלב ביצים וסלטים'],
   ['לחם ומאפים', 'לחם ומאפים טריים'],
   ['שימורים ורטבים', 'שימורים בישול ואפייה'],
@@ -171,6 +172,7 @@ const explicitCategoryAliases = new Map([
 ])
 
 const forcedCategoryRules = [
+  { category: 'בשר ודגים', keywords: ['סטייק', 'אנטריקוט'] },
   { category: 'קטניות ודגנים', keywords: ['פסטה', 'רביולי', 'אורז', 'ניוקי', 'מק אנד צ׳יז', 'מק אנד ציז', 'מק אנד צ\'יז', 'מקרוני', 'ספגטי'] },
   { category: 'חלב ביצים וסלטים', keywords: ['יוגורט', 'גבינה', 'גבינות', 'מוצרלה', 'פרמזן', 'בולגרית', 'פטה', 'צהובה', 'קוטג', 'קוטג׳'] },
   { category: 'משקאות', keywords: ['גולדסטאר', 'בירה', 'בירות'] },
@@ -524,7 +526,7 @@ function categoryDisplayName(category) {
 }
 
 function foodCompletenessScore(food) {
-  return Number(Boolean(food?.picture_url)) * 4 + Number(Boolean(food?.manufacturer)) * 2 + Number(Boolean(food?.unit_qty))
+  return Number(Boolean(resolveExplicitCategory(food?.category))) * 8 + Number(Boolean(food?.picture_url)) * 4 + Number(Boolean(food?.manufacturer)) * 2 + Number(Boolean(food?.unit_qty))
 }
 
 function foodSearchText(food) {

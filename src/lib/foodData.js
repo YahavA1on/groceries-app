@@ -16,21 +16,41 @@ const ratingSelects = [
 ]
 
 const inventorySelects = [
-  'id, owner_id, food_id, quantity, updated_at, created_at, last_purchased_at, purchased_at, purchase_date, food:foods(id, name, manufacturer, unit_qty, picture_url, category)',
-  'id, owner_id, food_id, quantity, updated_at, created_at, food:foods(id, name, manufacturer, unit_qty, picture_url, category)',
-  'id, owner_id, food_id, quantity, updated_at, created_at, food:foods(id, name, manufacturer, unit_qty, picture_url)',
-  'id, owner_id, food_id, quantity, food:foods(id, name, manufacturer, unit_qty, picture_url)',
+  'owner_id, food_id, quantity, added_at, created_at, updated_at, last_purchased_at, purchased_at, purchase_date',
+  'owner_id, food_id, quantity, updated_at, created_at',
+  'owner_id, food_id, quantity',
 ]
 
-const inventoryDateColumns = ['last_purchased_at', 'purchased_at', 'purchase_date', 'updated_at', null]
+const inventoryInsertDatePayloads = [
+  (date) => ({ added_at: date, last_purchased_at: date }),
+  (date) => ({ added_at: date }),
+  (date) => ({ last_purchased_at: date }),
+  (date) => ({ purchased_at: date }),
+  (date) => ({ purchase_date: date }),
+  (date) => ({ updated_at: date }),
+  () => ({}),
+]
+const inventoryUpdateDatePayloads = [
+  (date) => ({ last_purchased_at: date }),
+  (date) => ({ purchased_at: date }),
+  (date) => ({ purchase_date: date }),
+  (date) => ({ updated_at: date }),
+  () => ({}),
+]
 
 export async function addInventoryQuantities(ownerId, itemFoods, purchasedAt = new Date().toISOString()) {
-  const foodIds = itemFoods.map(({ food }) => food?.id).filter(Boolean)
+  const quantityByFoodId = new Map()
+  for (const { item, food } of itemFoods) {
+    if (!food?.id) continue
+    quantityByFoodId.set(food.id, (quantityByFoodId.get(food.id) || 0) + Number(item.quantity || 0))
+  }
+
+  const foodIds = Array.from(quantityByFoodId.keys())
   if (!ownerId || foodIds.length === 0) return
 
   const { data: existingRows, error: existingError } = await supabase
     .from('inventory')
-    .select('id, food_id, quantity')
+    .select('food_id, quantity')
     .eq('owner_id', ownerId)
     .in('food_id', foodIds)
 
@@ -38,14 +58,17 @@ export async function addInventoryQuantities(ownerId, itemFoods, purchasedAt = n
 
   const existingByFoodId = new Map((existingRows || []).map((row) => [row.food_id, row]))
 
-  for (const { item, food } of itemFoods) {
-    if (!food?.id) continue
-    const existing = existingByFoodId.get(food.id)
+  for (const [foodId, addedQuantity] of quantityByFoodId) {
+    const existing = existingByFoodId.get(foodId)
+    const nextQuantity = Number(existing?.quantity || 0) + addedQuantity
+
     if (existing) {
-      await updateInventoryRow(existing.id, Number(existing.quantity || 0) + item.quantity, purchasedAt)
+      await updateInventoryRow(ownerId, foodId, nextQuantity, purchasedAt)
     } else {
-      await insertInventoryRow(ownerId, food.id, item.quantity, purchasedAt)
+      await insertInventoryRow(ownerId, foodId, addedQuantity, purchasedAt)
     }
+
+    await verifyInventoryQuantity(ownerId, foodId, nextQuantity)
   }
 }
 
@@ -61,7 +84,19 @@ export async function fetchInventoryRows(ownerId) {
   const result = await runFallback(
     inventorySelects.map((select) => () => supabase.from('inventory').select(select).eq('owner_id', ownerId))
   )
-  return normalizeNestedFoodResult(result)
+  if (result.error) return normalizeNestedFoodResult(result)
+
+  const rows = result.data || []
+  const foodsResult = await fetchFoodsByIds(rows.map((row) => row.food_id))
+  const foodsById = new Map((foodsResult.data || []).map((food) => [food.id, food]))
+
+  return normalizeNestedFoodResult({
+    ...result,
+    data: rows.map((row) => ({
+      ...row,
+      food: foodsById.get(row.food_id) || null,
+    })),
+  })
 }
 
 export async function fetchInventoryQuantities(ownerId, foodIds) {
@@ -77,6 +112,43 @@ export async function fetchInventoryQuantities(ownerId, foodIds) {
   if (error) throw error
 
   return new Map((data || []).map((row) => [row.food_id, Number(row.quantity || 0)]))
+}
+
+export async function removeInventoryItem(ownerId, foodId) {
+  if (!ownerId || !foodId) return
+
+  const { error } = await supabase
+    .from('inventory')
+    .delete()
+    .eq('owner_id', ownerId)
+    .eq('food_id', foodId)
+
+  if (error) throw error
+
+  const quantities = await fetchInventoryQuantities(ownerId, [foodId])
+  if (quantities.has(foodId)) {
+    throw new Error('Inventory item was not removed. Check the inventory table policies for this user.')
+  }
+}
+
+export async function setInventoryQuantity(ownerId, foodId, quantity) {
+  if (!ownerId || !foodId) return
+
+  const nextQuantity = Number(quantity || 0)
+  if (nextQuantity <= 0) {
+    await removeInventoryItem(ownerId, foodId)
+    return
+  }
+
+  const { error } = await supabase
+    .from('inventory')
+    .update({ quantity: nextQuantity })
+    .eq('owner_id', ownerId)
+    .eq('food_id', foodId)
+
+  if (error) throw error
+
+  await verifyInventoryQuantity(ownerId, foodId, nextQuantity)
 }
 
 export async function fetchRatingsByOwner(ownerId) {
@@ -128,16 +200,28 @@ export async function fetchShoppingListItems(ownerId) {
   return normalizeNestedFoodResult(result)
 }
 
+async function fetchFoodsByIds(foodIds) {
+  const ids = Array.from(new Set(foodIds.filter(Boolean)))
+  if (ids.length === 0) return { data: [], error: null }
+
+  const result = await runFallback([
+    () => supabase.from('foods').select(foodSelectWithCategory).in('id', ids),
+    () => supabase.from('foods').select(foodSelect).in('id', ids),
+  ])
+
+  return normalizeFoodResult(result)
+}
+
 async function insertInventoryRow(ownerId, foodId, quantity, purchasedAt) {
   let lastError = null
 
-  for (const dateColumn of inventoryDateColumns) {
+  for (const buildDatePayload of inventoryInsertDatePayloads) {
     const row = {
       owner_id: ownerId,
       food_id: foodId,
       quantity,
+      ...buildDatePayload(purchasedAt),
     }
-    if (dateColumn) row[dateColumn] = purchasedAt
 
     const { error } = await supabase.from('inventory').insert(row)
     if (!error) return
@@ -159,19 +243,27 @@ async function runFallback(builders) {
   return { data: [], error: lastError }
 }
 
-async function updateInventoryRow(rowId, quantity, purchasedAt) {
+async function updateInventoryRow(ownerId, foodId, quantity, purchasedAt) {
   let lastError = null
 
-  for (const dateColumn of inventoryDateColumns) {
-    const payload = { quantity }
-    if (dateColumn) payload[dateColumn] = purchasedAt
+  for (const buildDatePayload of inventoryUpdateDatePayloads) {
+    const payload = { quantity, ...buildDatePayload(purchasedAt) }
 
-    const { error } = await supabase.from('inventory').update(payload).eq('id', rowId)
+    const { error } = await supabase.from('inventory').update(payload).eq('owner_id', ownerId).eq('food_id', foodId)
     if (!error) return
     lastError = error
   }
 
   throw lastError
+}
+
+async function verifyInventoryQuantity(ownerId, foodId, expectedQuantity) {
+  const quantities = await fetchInventoryQuantities(ownerId, [foodId])
+  const savedQuantity = quantities.get(foodId)
+
+  if (savedQuantity !== expectedQuantity) {
+    throw new Error('Inventory save did not persist. Check the inventory table policies for this user.')
+  }
 }
 
 function bestRating(rows, requireAgreement = false) {

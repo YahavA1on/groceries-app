@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
+import TopNotice from './TopNotice'
 import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchRatingsByOwner, fetchShoppingListItems } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupRowsByRank } from '../lib/foodFilters'
 import { supabase } from '../lib/supabase'
@@ -88,6 +89,8 @@ export default function MyRequestsPage({ session }) {
 
   return (
     <section className="space-y-4">
+      <TopNotice notice={error ? { tone: 'error', text: error } : null} onDismiss={() => setError('')} />
+
       <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
         <h2 className="text-2xl font-black">הבקשות שלי</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">פריטים שממתינים לקונה ופריטים שכבר נכנסו לעגלה.</p>
@@ -101,8 +104,6 @@ export default function MyRequestsPage({ session }) {
         placeholder="חיפוש בבקשות..."
         search={search}
       />
-
-      {error ? <div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div> : null}
 
       {loading ? (
         <EmptyState text="טוען בקשות..." />

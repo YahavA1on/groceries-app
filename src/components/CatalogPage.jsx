@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
+import TopNotice from './TopNotice'
 import { useCart } from '../hooks/useCart'
-import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchFoodsWithOptionalCategory, fetchRatingsByOwner } from '../lib/foodData'
+import { DEFAULT_MANUFACTURER, addInventoryQuantities, applyRelatedRatings, fetchFoodsWithOptionalCategory, fetchRatingsByOwner } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, getFoodCategory, groupFoodsByRank, groupFoodsByRatingMood, groupItemsByCategory, matchesFoodFilters, rankMetaForRating, ratingColorClass, visibleUniqueFoods } from '../lib/foodFilters'
 import { supabase } from '../lib/supabase'
 
@@ -86,6 +87,27 @@ export default function CatalogPage({ onSubmitted, session }) {
     setError('')
     setSuccess('')
 
+    if (inCart) {
+      try {
+        await addInventoryQuantities(
+          ownerId,
+          cartLines.map((item) => ({
+            item: { quantity: item.quantity },
+            food: { id: item.productId },
+          }))
+        )
+      } catch (inventoryError) {
+        setSubmitting(false)
+        setError(inventoryError.message)
+        return
+      }
+
+      setSubmitting(false)
+      clearCart()
+      setSuccess('המלאי עודכן.')
+      return
+    }
+
     const rows = cartLines.map((item) => ({
       owner_id: ownerId,
       food_id: item.productId,
@@ -105,18 +127,18 @@ export default function CatalogPage({ onSubmitted, session }) {
     }
 
     clearCart()
-    setSuccess(inCart ? 'העגלה נשמרה.' : 'הבקשה נשלחה לרשימת הקניות.')
-    if (!inCart) onSubmitted?.()
+    setSuccess('הבקשה נשלחה לרשימת הקניות.')
+    onSubmitted?.()
   }
 
   function requestSave(inCart) {
     setConfirmAction({
       inCart,
-      title: inCart ? 'שמירה בעגלה' : 'שליחת בקשה',
+      title: inCart ? 'שמירה במלאי' : 'שליחת בקשה',
       message: inCart
-        ? `לשמור ${count} פריטים בעגלה?`
+        ? `לשמור ${count} פריטים במלאי?`
         : `לשלוח בקשה לקניה עם ${count} פריטים?`,
-      confirmText: inCart ? 'כן, שמירה בעגלה' : 'כן, שליחת בקשה',
+      confirmText: inCart ? 'כן, שמירה במלאי' : 'כן, שליחת בקשה',
     })
   }
 
@@ -194,9 +216,16 @@ export default function CatalogPage({ onSubmitted, session }) {
       unit_qty: editingValues.unit_qty.trim() || null,
       updated_at: new Date().toISOString(),
     }
+    const categoryChanged = String(payload.category || '') !== String(getFoodCategory(editingFood) || '')
 
     let { error: updateError } = await supabase.from('foods').update(payload).eq('id', editingFood.id)
     if (updateError && /category/i.test(updateError.message || '')) {
+      if (categoryChanged) {
+        setEditingBusy(false)
+        setError('לא ניתן לשמור קטגוריה ידנית כי עמודת category חסרה או חסומה בטבלת foods.')
+        return
+      }
+
       const fallbackPayload = { ...payload }
       delete fallbackPayload.category
       const fallbackResult = await supabase.from('foods').update(fallbackPayload).eq('id', editingFood.id)
@@ -273,6 +302,14 @@ export default function CatalogPage({ onSubmitted, session }) {
 
   return (
     <section className="space-y-4">
+      <TopNotice
+        notice={error ? { tone: 'error', text: error } : success ? { tone: 'success', text: success } : null}
+        onDismiss={() => {
+          setError('')
+          setSuccess('')
+        }}
+      />
+
       {count > 0 ? (
         <div className="sticky top-[73px] z-20 rounded-2xl border border-rose-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-900">
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -322,7 +359,7 @@ export default function CatalogPage({ onSubmitted, session }) {
               onClick={() => requestSave(true)}
               type="button"
             >
-              {submitting ? 'שומר...' : 'שמירה בעגלה'}
+              {submitting ? 'שומר...' : 'שמירה במלאי'}
             </button>
             <button
               className="rounded-xl bg-rose-600 px-3 py-3 font-black text-white disabled:opacity-60"
@@ -348,9 +385,6 @@ export default function CatalogPage({ onSubmitted, session }) {
         onSearchChange={setSearch}
         search={search}
       />
-
-      {error ? <div className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div> : null}
-      {success ? <div className="rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200">{success}</div> : null}
 
       {loading ? (
         <EmptyState text="טוען מוצרים..." />
@@ -511,8 +545,8 @@ function EditFoodSheet({ busy, categoryOptions, food, onDelete, onRequestClose, 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/55 px-4 pb-4">
-      <div className="max-h-[92dvh] w-full max-w-md overflow-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4">
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-xl font-black">עריכת מוצר</h3>
@@ -638,8 +672,8 @@ function ensureCategoryOption(options, value) {
 
 function UnsavedChangesSheet({ onCancel, onConfirm }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/65 px-4 pb-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/65 p-4">
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
         <h3 className="text-xl font-black">יש שינויים שלא נשמרו</h3>
         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">לבטל את העריכה בלי לשמור?</p>
         <div className="mt-4 grid grid-cols-2 gap-2">
@@ -694,8 +728,8 @@ function EmptyState({ text }) {
 
 function ConfirmSheet({ action, busy, onCancel, onConfirm }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/55 px-4 pb-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4">
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
         <h3 className="text-xl font-black">{action.title}</h3>
         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{action.message}</p>
         <div className="mt-4 grid grid-cols-2 gap-2">
