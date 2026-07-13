@@ -3,14 +3,10 @@ import { isNonFoodProduct } from './productRules'
 
 export const DEFAULT_MANUFACTURER = 'רמי לוי'
 
-const foodSelectWithCategory = 'id, name, manufacturer, unit_qty, picture_url, category, updated_at'
 const foodSelect = 'id, name, manufacturer, unit_qty, picture_url, updated_at'
-const shoppingListSelectWithCategory =
-  'id, owner_id, food_id, quantity, in_cart, added_at, food:foods(id, name, manufacturer, unit_qty, picture_url, category)'
 const shoppingListSelect =
   'id, owner_id, food_id, quantity, in_cart, added_at, food:foods(id, name, manufacturer, unit_qty, picture_url)'
 const ratingSelects = [
-  'food_id, rating, owner_id, updated_at, food:foods(id, name, manufacturer, unit_qty, category)',
   'food_id, rating, owner_id, updated_at, food:foods(id, name, manufacturer, unit_qty)',
   'food_id, rating, owner_id, updated_at',
   'food_id, rating, owner_id',
@@ -74,10 +70,7 @@ export async function addInventoryQuantities(ownerId, itemFoods, purchasedAt = n
 }
 
 export async function fetchFoodsWithOptionalCategory() {
-  const result = await runFallback([
-    () => supabase.from('foods').select(foodSelectWithCategory).order('name', { ascending: true }),
-    () => supabase.from('foods').select(foodSelect).order('name', { ascending: true }),
-  ])
+  const result = await supabase.from('foods').select(foodSelect).order('name', { ascending: true })
   return normalizeFoodResult(result)
 }
 
@@ -194,10 +187,7 @@ export function applyRelatedRatings(foods, exactRatings, ratingRows = []) {
 }
 
 export async function fetchShoppingListItems(ownerId) {
-  const result = await runFallback([
-    () => supabase.from('shopping_list').select(shoppingListSelectWithCategory).eq('owner_id', ownerId).order('added_at', { ascending: false }),
-    () => supabase.from('shopping_list').select(shoppingListSelect).eq('owner_id', ownerId).order('added_at', { ascending: false }),
-  ])
+  const result = await supabase.from('shopping_list').select(shoppingListSelect).eq('owner_id', ownerId).order('added_at', { ascending: false })
   return normalizeNestedFoodResult(result)
 }
 
@@ -205,10 +195,7 @@ async function fetchFoodsByIds(foodIds) {
   const ids = Array.from(new Set(foodIds.filter(Boolean)))
   if (ids.length === 0) return { data: [], error: null }
 
-  const result = await runFallback([
-    () => supabase.from('foods').select(foodSelectWithCategory).in('id', ids),
-    () => supabase.from('foods').select(foodSelect).in('id', ids),
-  ])
+  const result = await supabase.from('foods').select(foodSelect).in('id', ids)
 
   return normalizeFoodResult(result)
 }

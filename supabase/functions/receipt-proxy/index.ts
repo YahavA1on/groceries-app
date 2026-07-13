@@ -5,6 +5,13 @@ const RECEIPT_HOSTS = new Set(['digi.rami-levy.co.il'])
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024
 const MAX_AI_ITEMS = 60
 const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-flash-lite-latest'
+const GEMINI_URL_MODELS = [...new Set([
+  Deno.env.get('GEMINI_URL_MODEL'),
+  GEMINI_MODEL,
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-flash-latest',
+].filter(Boolean))] as string[]
 
 type AiInput = {
   index: number
@@ -63,13 +70,25 @@ async function fetchReceipt(value: unknown, corsHeaders: HeadersInit) {
     return response('Receipt host is not allowed', 400, corsHeaders)
   }
 
-  const upstream = await fetch(receiptUrl, {
+  const receiptId = receiptUrl.pathname.split('/').filter(Boolean).at(-1) || ''
+  if (!/^[A-Za-z0-9_-]{10,100}$/.test(receiptId)) {
+    return response('Invalid receipt ID', 400, corsHeaders)
+  }
+
+  const receiptApiUrl = `https://digi-api.rami-levy.co.il/api/client/documents/${encodeURIComponent(receiptId)}`
+  const upstream = await fetch(receiptApiUrl, {
     headers: {
-      Accept: 'text/html,application/json,text/plain,*/*',
+      Accept: 'application/json',
+      Origin: 'https://digi.rami-levy.co.il',
+      Referer: 'https://digi.rami-levy.co.il/',
       'User-Agent': 'groceries-app-receipt-import/1.0',
     },
     signal: AbortSignal.timeout(15_000),
   })
+
+  if (!upstream.ok && [401, 403].includes(upstream.status)) {
+    return fetchReceiptWithGemini(receiptApiUrl, corsHeaders)
+  }
 
   const declaredLength = Number(upstream.headers.get('content-length') || 0)
   if (declaredLength > MAX_RECEIPT_BYTES) return response('Receipt response is too large', 413, corsHeaders)
@@ -84,9 +103,111 @@ async function fetchReceipt(value: unknown, corsHeaders: HeadersInit) {
     headers: {
       ...corsHeaders,
       'Cache-Control': 'no-store',
-      'Content-Type': upstream.headers.get('content-type') || 'text/plain; charset=utf-8',
+      'Content-Type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
     },
   })
+}
+
+async function fetchReceiptWithGemini(receiptUrl: string, corsHeaders: HeadersInit) {
+  const apiKey = Deno.env.get('GEMINI_API_KEY')
+  if (!apiKey) return response('Receipt service is blocked and Gemini is not configured', 503, corsHeaders)
+
+  const geminiRequest = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{
+        role: 'user',
+        parts: [{
+            text: [
+              'Open the Rami Levy receipt JSON URL below and extract product lines only.',
+              'Do not return customer details, addresses, payment information, totals, discounts, or loyalty information.',
+              'Copy every object from data.items into the output items array; do not inspect or return any other section.',
+              'Map name, code, quantity, and weight directly. Use an empty string for a missing code and 0 for a missing numeric value.',
+              'Do not return an empty items array when data.items contains products.',
+              `Receipt URL: ${receiptUrl}`,
+          ].join('\n'),
+        }],
+      }],
+      tools: [{ url_context: {} }],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: 'application/json',
+        responseJsonSchema: receiptExtractionSchema(),
+      },
+    }),
+  }
+
+  let geminiResponse: Response | undefined
+  for (const model of GEMINI_URL_MODELS) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      geminiResponse = await fetch(endpoint, { ...geminiRequest, signal: AbortSignal.timeout(30_000) })
+      if (geminiResponse.ok) break
+      if (![429, 503].includes(geminiResponse.status) || attempt === 1) break
+      await geminiResponse.body?.cancel()
+      await new Promise((resolve) => setTimeout(resolve, 1_000 * (attempt + 1)))
+    }
+    if (!geminiResponse) continue
+    if (geminiResponse.ok || ![404, 429, 503].includes(geminiResponse.status)) break
+  }
+
+  if (!geminiResponse) throw new Error('Gemini URL extraction did not start')
+  if (!geminiResponse.ok) {
+    const errorText = (await geminiResponse.text()).slice(0, 500)
+    throw new Error(`Gemini URL extraction returned ${geminiResponse.status}: ${errorText}`)
+  }
+
+  const payload = await geminiResponse.json()
+  const outputText = payload?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || '').join('')
+  if (!outputText) throw new Error('Gemini URL extraction returned an empty response')
+
+  let extracted: unknown
+  try {
+    extracted = JSON.parse(outputText)
+  } catch {
+    throw new Error('Gemini URL extraction returned invalid JSON')
+  }
+  if (!extracted || typeof extracted !== 'object' || !Array.isArray((extracted as Record<string, unknown>).items)) {
+    throw new Error('Gemini URL extraction did not return receipt items')
+  }
+  if ((extracted as { items: unknown[] }).items.length === 0) {
+    const metadata = payload?.candidates?.[0]?.urlContextMetadata || payload?.candidates?.[0]?.url_context_metadata
+    const urlMetadata = metadata?.urlMetadata || metadata?.url_metadata || []
+    const retrievalStatuses = urlMetadata
+      .map((entry: Record<string, unknown>) => entry.urlRetrievalStatus || entry.url_retrieval_status)
+      .filter(Boolean)
+      .join(', ')
+    throw new Error(`Gemini could not retrieve receipt products${retrievalStatuses ? ` (${retrievalStatuses})` : ''}`)
+  }
+
+  return new Response(JSON.stringify(extracted), {
+    headers: { ...corsHeaders, 'Cache-Control': 'no-store', 'Content-Type': 'application/json; charset=utf-8' },
+  })
+}
+
+function receiptExtractionSchema() {
+  return {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            code: { type: 'string' },
+            quantity: { type: 'number' },
+            weight: { type: 'number' },
+          },
+          required: ['name', 'code', 'quantity', 'weight'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['items'],
+    additionalProperties: false,
+  }
 }
 
 async function fetchCatalog(queryValue: unknown, storeValue: unknown, corsHeaders: HeadersInit) {

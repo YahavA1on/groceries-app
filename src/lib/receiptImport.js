@@ -19,11 +19,13 @@ const BARCODE_KEYS = ['barcode', 'barCode', 'code', 'itemCode', 'item_code', 'sk
 const QUANTITY_KEYS = ['quantity', 'qty', 'amount', 'count', 'units', 'weightQty']
 
 export async function fetchReceiptText(receiptUrl) {
-  const directError = await fetchText(receiptUrl).catch((error) => error)
-  if (typeof directError === 'string') return directError
+  const directResult = import.meta.env.PROD
+    ? new Error('Direct receipt requests are blocked in production')
+    : await fetchText(receiptUrl).catch((error) => error)
+  if (typeof directResult === 'string') return directResult
 
   const proxyText = await fetchReceiptFromServer(receiptUrl).catch((error) => {
-    throw new Error(`לא הצלחתי לטעון את הקבלה. ${error.message || directError.message}`)
+    throw new Error(`לא הצלחתי לטעון את הקבלה. ${error.message || directResult.message}`)
   })
 
   return proxyText

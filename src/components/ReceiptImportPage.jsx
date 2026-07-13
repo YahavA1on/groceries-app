@@ -18,6 +18,7 @@ export default function ReceiptImportPage({ session }) {
   const [success, setSuccess] = useState('')
 
   const ownerId = session.role === 'shopper' ? session.shops_for_user_id : session.user_id
+  const receiptDataUrl = ramiReceiptDataUrl(receiptUrl)
   const totalQuantity = useMemo(() => items.reduce((sum, item) => sum + item.quantity, 0), [items])
 
   async function scanReceipt() {
@@ -92,6 +93,16 @@ export default function ReceiptImportPage({ session }) {
           value={receiptUrl}
         />
 
+        {receiptDataUrl ? (
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+            אם הסריקה האוטומטית חסומה,{' '}
+            <a className="font-black text-rose-700 underline dark:text-cyan-300" href={receiptDataUrl} rel="noreferrer" target="_blank">
+              פתחו את נתוני הקבלה
+            </a>
+            , העתיקו הכול והדביקו בשדה הבא. אין לשתף את הנתונים עם אדם אחר.
+          </p>
+        ) : null}
+
         <label className="mt-4 block text-sm font-black text-slate-600 dark:text-slate-300" htmlFor="receipt-text">
           טקסט קבלה להדבקה
         </label>
@@ -139,6 +150,18 @@ export default function ReceiptImportPage({ session }) {
       ) : null}
     </section>
   )
+}
+
+function ramiReceiptDataUrl(value) {
+  try {
+    const url = new URL(value)
+    if (url.hostname !== 'digi.rami-levy.co.il') return null
+    const receiptId = url.pathname.split('/').filter(Boolean).at(-1) || ''
+    if (!/^[A-Za-z0-9_-]{10,100}$/.test(receiptId)) return null
+    return `https://digi-api.rami-levy.co.il/api/client/documents/${encodeURIComponent(receiptId)}`
+  } catch {
+    return null
+  }
 }
 
 function ReceiptItem({ item }) {
@@ -546,8 +569,9 @@ function withReliableReceiptImage(item) {
 
 function receiptImageCandidates(item) {
   const barcode = String(item.barcode || '').trim()
-  const ramiImages = /^\d{7,14}$/.test(barcode)
+  const ramiImages = /^\d{1,14}$/.test(barcode)
     ? [
+        `https://img.rami-levy.co.il/product/${barcode}/app/${barcode}.jpg`,
         `https://img.rami-levy.co.il/product/${barcode}/small.jpg`,
         `https://img.rami-levy.co.il/product/${barcode}/large.jpg`,
         `https://img.rami-levy.co.il/product/${barcode}/medium.jpg`,

@@ -43,7 +43,7 @@ npx supabase secrets set GEMINI_API_KEY=your-key --project-ref erfkngpyauhibcjfs
 npx supabase functions deploy receipt-proxy --project-ref erfkngpyauhibcjfsszx --no-verify-jwt
 ```
 
-The receipt importer sends Gemini only compact product descriptions, never the complete receipt. Gemini normalizes names, manufacturers, and package sizes in one batch. The app keeps the deterministic result whenever Gemini is unavailable or returns confidence below `0.7`. The default model is Google's rolling `gemini-flash-lite-latest` alias.
+The receipt importer normally sends Gemini only compact product descriptions. Because Rami Levy blocks datacenter and browser requests, Gemini URL context is used as a fallback to open the receipt link and return product lines only; customer, address, payment, total, and loyalty fields are explicitly excluded from the output. Gemini then normalizes names, manufacturers, package sizes, food classification, and database matches in one batch. The app keeps the deterministic result whenever Gemini is unavailable or returns confidence below `0.7`. The default normalization model is Google's rolling `gemini-flash-lite-latest` alias.
 
 צד הלקוח משתמש במשתנים:
 

@@ -72,7 +72,10 @@ async function fetchJson(url, options) {
 
 async function responseError(response) {
   const message = (await response.text()).trim()
-  return message || `Request failed with status ${response.status}`
+  if (response.headers.get('content-type')?.includes('text/html')) {
+    return `Upstream service rejected the request (${response.status})`
+  }
+  return message.slice(0, 500) || `Request failed with status ${response.status}`
 }
 
 function receiptSourceName(item) {
