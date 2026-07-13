@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import TopNotice from './TopNotice'
-import { DEFAULT_MANUFACTURER, addInventoryQuantities } from '../lib/foodData'
+import { addInventoryQuantities } from '../lib/foodData'
 import { buildFoodInsert, fetchReceiptText, parseReceiptItems } from '../lib/receiptImport'
 import { fetchCatalogFromServer, normalizeReceiptItemsWithAi } from '../lib/receiptApi'
 import { supabase } from '../lib/supabase'
@@ -21,14 +21,14 @@ export default function ReceiptImportPage({ session }) {
   const receiptDataUrl = ramiReceiptDataUrl(receiptUrl)
   const totalQuantity = useMemo(() => items.reduce((sum, item) => sum + item.quantity, 0), [items])
 
-  async function scanReceipt() {
+  async function scanReceipt(pastedText = '') {
     setLoading(true)
     setError('')
     setSuccess('')
     setItems([])
 
     try {
-      const raw = receiptText.trim() || (await fetchReceiptText(receiptUrl.trim()))
+      const raw = pastedText.trim() || receiptText.trim() || (await fetchReceiptText(receiptUrl.trim()))
       const parsed = parseReceiptItems(raw)
       if (parsed.length === 0) {
         setError('לא נמצאו מוצרים בקבלה. אם הקישור חסום, פתחו אותו בטלפון והדביקו כאן את טקסט הקבלה.')
@@ -36,9 +36,24 @@ export default function ReceiptImportPage({ session }) {
         setItems(await enrichReceiptItems(parsed))
       }
     } catch (scanError) {
-      setError(`${scanError.message} אם הדפדפן חסם את הקישור, הדביקו את טקסט הקבלה ידנית.`)
+      if (receiptDataUrl && !receiptText.trim() && !pastedText.trim()) {
+        setError('רמי לוי חסמו את הסריקה הישירה. פתחו את נתוני הקבלה, העתיקו הכול, חזרו לכאן ולחצו על ״הדבקה מהלוח וסריקה״.')
+      } else {
+        setError(scanError.message || 'לא הצלחתי לסרוק את הקבלה. נסו שוב.')
+      }
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function pasteAndScanReceipt() {
+    try {
+      const clipboardText = await navigator.clipboard.readText()
+      if (!clipboardText.trim()) throw new Error('הלוח ריק. העתיקו תחילה את נתוני הקבלה.')
+      setReceiptText(clipboardText)
+      await scanReceipt(clipboardText)
+    } catch (clipboardError) {
+      setError(clipboardError.message || 'לא הצלחתי לקרוא מהלוח. הדביקו את הנתונים ידנית.')
     }
   }
 
@@ -114,10 +129,21 @@ export default function ReceiptImportPage({ session }) {
           value={receiptText}
         />
 
+        {receiptDataUrl ? (
+          <button
+            className="mt-2 h-11 w-full rounded-xl border border-cyan-500 px-4 font-black text-cyan-800 disabled:opacity-60 dark:text-cyan-300"
+            disabled={loading}
+            onClick={pasteAndScanReceipt}
+            type="button"
+          >
+            הדבקה מהלוח וסריקה
+          </button>
+        ) : null}
+
         <button
           className="mt-3 h-12 w-full rounded-xl bg-rose-600 px-4 font-black text-white disabled:opacity-60 dark:bg-cyan-400 dark:text-slate-950"
           disabled={loading || (!receiptUrl.trim() && !receiptText.trim())}
-          onClick={scanReceipt}
+          onClick={() => scanReceipt()}
           type="button"
         >
           {loading ? 'סורק...' : 'סריקת קבלה'}
@@ -185,8 +211,8 @@ function ReceiptItem({ item }) {
       </div>
       <div className="min-w-0 flex-1">
         <h4 className="line-clamp-2 font-black leading-tight">{item.name}</h4>
-        <p className="mt-1 truncate text-sm text-slate-500 dark:text-slate-400">{item.manufacturer || DEFAULT_MANUFACTURER}</p>
-        <p className="mt-1 text-sm font-black text-rose-700 dark:text-cyan-300">{item.unit_qty || 'יחידת מידה לא צוינה'}</p>
+        <p className="mt-1 truncate text-sm text-slate-500 dark:text-slate-400">{item.manufacturer || 'יצרן לא ידוע'}</p>
+        <p className="mt-1 text-sm font-black text-rose-700 dark:text-cyan-300">{item.unit_qty || 'יחידה'}</p>
       </div>
       <span className="rounded-xl bg-cyan-100 px-3 py-2 text-sm font-black text-cyan-950 dark:bg-cyan-400 dark:text-slate-950">x{item.quantity}</span>
     </article>
@@ -322,6 +348,7 @@ async function enrichReceiptItems(items) {
   return mergeDuplicateReceiptItems(
     normalizedItems
       .filter((item) => !isNonFoodProduct(item))
+      .map(normalizeReceiptPresentation)
       .map(withReliableReceiptImage)
   )
 }
@@ -524,8 +551,12 @@ async function applyAiNormalization(items) {
 
       const matchedFood = item.match_candidates?.find((food) => String(food.id) === String(aiItem.matched_food_id))
       if (matchedFood) {
+        const matched = mergeReceiptItemWithFood(item, matchedFood)
         return {
-          ...mergeReceiptItemWithFood(item, matchedFood),
+          ...matched,
+          name: preferHebrewText(aiItem.name, matched.name, 'מוצר לא מזוהה'),
+          manufacturer: preferHebrewText(aiItem.manufacturer, matched.manufacturer, null),
+          unit_qty: singleUnitQty(aiItem.unit_qty || matched.unit_qty),
           matched_food_id: matchedFood.id,
           match_candidates: item.match_candidates,
           is_food: aiItem.is_food,
@@ -534,9 +565,9 @@ async function applyAiNormalization(items) {
 
       return {
         ...item,
-        name: cleanAiText(aiItem.name) || item.name,
-        manufacturer: cleanAiText(aiItem.manufacturer) || item.manufacturer,
-        unit_qty: cleanAiText(aiItem.unit_qty) || item.unit_qty,
+        name: preferHebrewText(aiItem.name, item.name, 'מוצר לא מזוהה'),
+        manufacturer: preferHebrewText(aiItem.manufacturer, item.manufacturer, null),
+        unit_qty: singleUnitQty(aiItem.unit_qty || item.unit_qty),
         is_food: aiItem.is_food,
       }
     }).filter(Boolean)
@@ -556,6 +587,66 @@ function cleanAiText(value) {
   if (typeof value !== 'string') return null
   const text = value.replace(/\s+/g, ' ').trim()
   return text && text !== '-' && text.toLowerCase() !== 'null' ? text : null
+}
+
+function preferHebrewText(primary, fallback, emptyValue) {
+  const primaryText = cleanAiText(primary)
+  const fallbackText = cleanAiText(fallback)
+  if (primaryText && containsHebrew(primaryText)) return primaryText
+  if (fallbackText && containsHebrew(fallbackText)) return fallbackText
+  return emptyValue
+}
+
+function normalizeReceiptPresentation(item) {
+  return {
+    ...item,
+    name: preferHebrewText(item.name, null, 'מוצר לא מזוהה'),
+    manufacturer: preferHebrewText(item.manufacturer, null, null),
+    unit_qty: singleUnitQty(item.unit_qty, item.name),
+  }
+}
+
+function singleUnitQty(value, productName = '') {
+  const text = `${cleanAiText(value) || ''} ${productName || ''}`.trim()
+  if (!text || /^0(?:[.,]0+)?(?:\s|$)/.test(text)) return 'יחידה'
+
+  const multipack = text.match(/(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)/i)
+  if (multipack) {
+    const total = Number(multipack[1].replace(',', '.')) * Number(multipack[2].replace(',', '.'))
+    const unit = normalizedUnitFromText(text) || 'יחידות'
+    return `${formatUnitAmount(total)} ${unit}`
+  }
+
+  const measurement = text.match(/(\d+(?:[.,]\d+)?)\s*(מ["״]?ל|מיליליטר|ליטר|גרם|גר|ג|ק["״]?ג|קג|יחידות|יחידה|יח[׳'])/i)
+  if (measurement) {
+    const amount = Number(measurement[1].replace(',', '.'))
+    if (!amount) return 'יחידה'
+    return `${formatUnitAmount(amount)} ${normalizeHebrewUnit(measurement[2]) || 'יחידות'}`
+  }
+
+  return 'יחידה'
+}
+
+function normalizedUnitFromText(value) {
+  const unit = value.match(/מ["״]?ל|מיליליטר|ליטר|גרם|גר|ג|ק["״]?ג|קג|יחידות|יחידה|יח[׳']/i)?.[0]
+  return normalizeHebrewUnit(unit)
+}
+
+function normalizeHebrewUnit(value = '') {
+  if (/^(?:מ["״]?ל|מיליליטר)$/i.test(value)) return 'מ״ל'
+  if (/^ליטר$/i.test(value)) return 'ליטר'
+  if (/^(?:גרם|גר|ג)$/i.test(value)) return 'גרם'
+  if (/^(?:ק["״]?ג|קג)$/i.test(value)) return 'ק״ג'
+  if (/^(?:יחידות|יחידה|יח[׳'])$/i.test(value)) return 'יחידות'
+  return ''
+}
+
+function formatUnitAmount(value) {
+  return String(Number(value.toFixed(3)))
+}
+
+function containsHebrew(value) {
+  return /[\u0590-\u05ff]/.test(String(value || ''))
 }
 
 function withReliableReceiptImage(item) {
@@ -668,7 +759,6 @@ function removePlainNumbersFromName(value) {
 }
 
 function mergeUnitQty(primary, secondary) {
-  if (primary && secondary && primary !== secondary) return `${primary}, ${secondary}`
   return primary || secondary || null
 }
 

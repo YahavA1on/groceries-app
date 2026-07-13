@@ -78,10 +78,14 @@ async function fetchReceipt(value: unknown, corsHeaders: HeadersInit) {
   const receiptApiUrl = `https://digi-api.rami-levy.co.il/api/client/documents/${encodeURIComponent(receiptId)}`
   const upstream = await fetch(receiptApiUrl, {
     headers: {
-      Accept: 'application/json',
+      Accept: 'application/json, text/plain, */*',
+      'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
       Origin: 'https://digi.rami-levy.co.il',
       Referer: 'https://digi.rami-levy.co.il/',
-      'User-Agent': 'groceries-app-receipt-import/1.0',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-site',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
     },
     signal: AbortSignal.timeout(15_000),
   })
@@ -364,7 +368,8 @@ function normalizeCandidates(value: unknown): AiInput['candidates'] {
 
 function normalizationPrompt(items: AiInput[]) {
   return [
-    'You normalize Israeli grocery receipt items. Return Hebrew product metadata only.',
+    'You normalize Israeli grocery receipt items. Product names and manufacturers must always be written in Hebrew.',
+    'Translate generic product words to Hebrew and transliterate foreign brand names into their commonly used Hebrew spelling.',
     'Correct OCR mistakes and remove retailer/internal codes from names.',
     'Each item may include candidates from the existing foods database.',
     'Choose matched_food_id when a candidate represents the same real product despite spelling errors, word order, abbreviations, or a clearly incorrect receipt unit.',
@@ -374,11 +379,14 @@ function normalizationPrompt(items: AiInput[]) {
     'Cleaning products, cosmetics, hygiene products, paper goods, kitchen supplies, balloons, and other household items are not food.',
     'food_confidence is the independent confidence in that food/non-food classification.',
     'Preserve meaningful product variants such as scent, fat percentage, or package type.',
-    'Manufacturer must be copied only from a supplied manufacturer field or an explicit brand in the supplied names.',
+    'Manufacturer must represent only a supplied manufacturer or an explicit brand in the supplied names, but write it in Hebrew.',
     'Never substitute a different brand and never change the product category (for example milk must remain milk, not yogurt).',
-    'The numeric quantity must come from the supplied text. Correct the unit label when the supplied unit is physically impossible.',
+    'unit_qty must contain at most one number and one Hebrew unit label.',
+    'Convert multipacks to one total measurement: for example 9x100 grams becomes 900 גרם, never 100 גרם, 9x100.',
+    'When no measurement exists, or it is zero, return יחידה.',
+    'The numeric measurement must come from the supplied text or arithmetic on supplied multipack numbers. Correct the unit label when the supplied unit is physically impossible.',
     'Use physical common sense to correct an obviously corrupted unit: solid produce such as bananas is measured in grams or kilograms, never milliliters; liquids use milliliters or liters.',
-    'Never guess missing facts. Use an empty string when a manufacturer or unit cannot be established.',
+    'Never guess a missing manufacturer. Use an empty manufacturer string when it cannot be established.',
     'Confidence is 0 to 1 and must be below 0.7 whenever a fact is uncertain.',
     'Keep every input index exactly once and do not add products.',
     JSON.stringify(items),
@@ -435,13 +443,16 @@ function validateAiOutput(value: unknown, inputs: AiInput[]) {
     const matchedCandidate = input.candidates.find((candidate) => candidate.id === requestedMatchId)
     if (matchedCandidate) {
       const evidence = `${input.raw_name} ${input.current_name} ${input.manufacturer} ${input.unit_qty}`
+      const aiName = cleanString(item.name, 300)
       const aiManufacturer = supportedManufacturer(cleanString(item.manufacturer, 120), evidence, input.manufacturer)
       const aiUnit = supportedUnit(cleanString(item.unit_qty, 120), evidence)
       return {
         index,
-        name: matchedCandidate.name,
-        manufacturer: matchedCandidate.manufacturer || aiManufacturer.value,
-        unit_qty: matchedCandidate.unit_qty || aiUnit.value,
+        name: containsHebrew(aiName) ? aiName : matchedCandidate.name,
+        manufacturer: containsHebrew(aiManufacturer.value)
+          ? aiManufacturer.value
+          : matchedCandidate.manufacturer || aiManufacturer.value,
+        unit_qty: singleUnitQty(aiUnit.value || matchedCandidate.unit_qty),
         matched_food_id: matchedCandidate.id,
         is_food: isFood,
         food_confidence: Number.isFinite(foodConfidence) ? Math.max(0, Math.min(1, foodConfidence)) : 0,
@@ -452,7 +463,8 @@ function validateAiOutput(value: unknown, inputs: AiInput[]) {
     }
 
     const evidence = `${input.raw_name} ${input.current_name} ${input.manufacturer} ${input.unit_qty}`
-    const nameIsSupported = hasWordOverlap(name, `${input.raw_name} ${input.current_name}`)
+    const nameEvidence = `${input.raw_name} ${input.current_name}`
+    const nameIsSupported = hasWordOverlap(name, nameEvidence) || (containsHebrew(name) && containsLatin(nameEvidence))
     const manufacturer = supportedManufacturer(cleanString(item.manufacturer, 120), evidence, input.manufacturer)
     const unitQty = supportedUnit(cleanString(item.unit_qty, 120), evidence)
     const safeConfidence = nameIsSupported && manufacturer.supported && unitQty.supported
@@ -463,7 +475,7 @@ function validateAiOutput(value: unknown, inputs: AiInput[]) {
       index,
       name: nameIsSupported ? name : input.current_name,
       manufacturer: manufacturer.value,
-      unit_qty: unitQty.value,
+      unit_qty: singleUnitQty(unitQty.value),
       matched_food_id: '',
       is_food: isFood,
       food_confidence: Number.isFinite(foodConfidence) ? Math.max(0, Math.min(1, foodConfidence)) : 0,
@@ -477,8 +489,30 @@ function validateAiOutput(value: unknown, inputs: AiInput[]) {
 
 function hasWordOverlap(candidate: string, evidence: string) {
   const candidateWords = meaningfulWords(candidate)
-  const evidenceWords = new Set(meaningfulWords(evidence))
-  return candidateWords.some((word) => evidenceWords.has(word))
+  const evidenceWords = meaningfulWords(evidence)
+  return candidateWords.some((word) => evidenceWords.some((evidenceWord) => wordSimilarity(word, evidenceWord) >= 0.72))
+}
+
+function wordSimilarity(left: string, right: string) {
+  if (left === right) return 1
+  const longest = Math.max(left.length, right.length)
+  if (!longest) return 1
+  return 1 - levenshteinDistance(left, right) / longest
+}
+
+function levenshteinDistance(left: string, right: string) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index)
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    let diagonal = previous[0]
+    previous[0] = leftIndex
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const above = previous[rightIndex]
+      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1
+      previous[rightIndex] = Math.min(previous[rightIndex] + 1, previous[rightIndex - 1] + 1, diagonal + cost)
+      diagonal = above
+    }
+  }
+  return previous[right.length]
 }
 
 function meaningfulWords(value: string) {
@@ -492,16 +526,65 @@ function supportedManufacturer(value: string, evidence: string, suppliedManufact
   const normalizedValue = normalizeForCompare(value)
   const normalizedEvidence = normalizeForCompare(evidence)
   const normalizedSupplied = normalizeForCompare(suppliedManufacturer)
-  const supported = normalizedValue === normalizedSupplied || normalizedEvidence.includes(normalizedValue)
+  const supported = normalizedValue === normalizedSupplied || normalizedEvidence.includes(normalizedValue) ||
+    (containsHebrew(value) && containsLatin(evidence))
   return { value: supported ? value : '', supported }
 }
 
 function supportedUnit(value: string, evidence: string) {
-  if (!value) return { value: '', supported: true }
+  if (!value || value === 'יחידה') return { value: 'יחידה', supported: true }
   const numbers = value.match(/\d+(?:[.,]\d+)?/g) || []
   const normalizedEvidence = normalizeForCompare(evidence)
-  const supported = numbers.every((number) => normalizedEvidence.includes(number.replace(',', '.')))
+  const evidenceNumbers = (normalizedEvidence.match(/\d+(?:\.\d+)?/g) || []).map(Number)
+  const supported = numbers.every((number) => {
+    const target = Number(number.replace(',', '.'))
+    return evidenceNumbers.includes(target) || evidenceNumbers.some((left) => evidenceNumbers.some((right) => left * right === target))
+  })
   return { value: supported ? value : '', supported }
+}
+
+function singleUnitQty(value: string) {
+  const text = cleanString(value, 120)
+  if (!text || /^0(?:[.,]0+)?(?:\s|$)/.test(text)) return 'יחידה'
+
+  const multipack = text.match(/(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)\s*(מ["״]?ל|מיליליטר|ליטר|גרם|גר|ג|ק["״]?ג|קג)?/i)
+  if (multipack) {
+    const total = Number(multipack[1].replace(',', '.')) * Number(multipack[2].replace(',', '.'))
+    const unit = normalizeHebrewUnit(multipack[3])
+    return unit ? `${formatAmount(total)} ${unit}` : `${formatAmount(total)} יחידות`
+  }
+
+  const measurement = text.match(/(\d+(?:[.,]\d+)?)\s*(מ["״]?ל|מיליליטר|ליטר|גרם|גר|ג|ק["״]?ג|קג|יחידות|יחידה|יח[׳'])/i)
+  if (measurement) {
+    const amount = Number(measurement[1].replace(',', '.'))
+    if (!amount) return 'יחידה'
+    const unit = normalizeHebrewUnit(measurement[2]) || 'יחידות'
+    return `${formatAmount(amount)} ${unit}`
+  }
+
+  const number = Number(text.match(/\d+(?:[.,]\d+)?/)?.[0]?.replace(',', '.'))
+  return Number.isFinite(number) && number > 0 ? `${formatAmount(number)} יחידות` : 'יחידה'
+}
+
+function normalizeHebrewUnit(value = '') {
+  if (/^(?:מ["״]?ל|מיליליטר)$/i.test(value)) return 'מ״ל'
+  if (/^ליטר$/i.test(value)) return 'ליטר'
+  if (/^(?:גרם|גר|ג)$/i.test(value)) return 'גרם'
+  if (/^(?:ק["״]?ג|קג)$/i.test(value)) return 'ק״ג'
+  if (/^(?:יחידות|יחידה|יח[׳'])$/i.test(value)) return 'יחידות'
+  return ''
+}
+
+function formatAmount(value: number) {
+  return String(Number(value.toFixed(3)))
+}
+
+function containsHebrew(value: string) {
+  return /[\u0590-\u05ff]/.test(value)
+}
+
+function containsLatin(value: string) {
+  return /[a-z]/i.test(value)
 }
 
 function normalizeForCompare(value: string) {
