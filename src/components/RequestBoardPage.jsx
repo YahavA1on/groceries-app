@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import TopNotice from './TopNotice'
 import { formatDate } from '../lib/format'
 import { supabase } from '../lib/supabase'
+import { isNonFoodProduct } from '../lib/productRules'
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
 
 const realtimeTables = ['shopping_list']
@@ -25,7 +26,7 @@ export default function RequestBoardPage({ onStartShopping, session }) {
       setError(queryError.message)
       setRows([])
     } else {
-      setRows((data || []).filter((row) => row.owner_id !== session.user_id))
+      setRows((data || []).filter((row) => row.owner_id !== session.user_id && !isNonFoodProduct(row.food)))
     }
 
     setLoading(false)

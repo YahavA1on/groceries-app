@@ -1,3 +1,5 @@
+import { fetchReceiptFromServer } from './receiptApi'
+
 const RECEIPT_ITEM_KEYS = [
   'items',
   'products',
@@ -20,8 +22,7 @@ export async function fetchReceiptText(receiptUrl) {
   const directError = await fetchText(receiptUrl).catch((error) => error)
   if (typeof directError === 'string') return directError
 
-  const proxyUrl = `/api/receipt-text?url=${encodeURIComponent(receiptUrl)}`
-  const proxyText = await fetchText(proxyUrl).catch((error) => {
+  const proxyText = await fetchReceiptFromServer(receiptUrl).catch((error) => {
     throw new Error(`לא הצלחתי לטעון את הקבלה. ${error.message || directError.message}`)
   })
 

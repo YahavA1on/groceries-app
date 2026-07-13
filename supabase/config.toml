@@ -1,0 +1,4 @@
+project_id = "groceries-app"
+
+[functions.receipt-proxy]
+verify_jwt = false

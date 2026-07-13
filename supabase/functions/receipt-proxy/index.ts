@@ -1,0 +1,424 @@
+const ALLOWED_ORIGINS = new Set([
+  'https://yahava1on.github.io',
+])
+const RECEIPT_HOSTS = new Set(['digi.rami-levy.co.il'])
+const MAX_RECEIPT_BYTES = 5 * 1024 * 1024
+const MAX_AI_ITEMS = 60
+const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-flash-lite-latest'
+
+type AiInput = {
+  index: number
+  raw_name: string
+  current_name: string
+  manufacturer: string
+  unit_qty: string
+  candidates: Array<{
+    id: string
+    name: string
+    manufacturer: string
+    unit_qty: string
+  }>
+}
+
+Deno.serve(async (request) => {
+  const origin = request.headers.get('origin') || ''
+  const corsHeaders = buildCorsHeaders(origin)
+
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: isAllowedOrigin(origin) ? 204 : 403, headers: corsHeaders })
+  }
+
+  if (request.method !== 'POST') return response('Method not allowed', 405, corsHeaders)
+  if (!isAllowedOrigin(origin)) return response('Origin not allowed', 403, corsHeaders)
+
+  let body: Record<string, unknown>
+  try {
+    body = await request.json()
+  } catch {
+    return response('Invalid JSON body', 400, corsHeaders)
+  }
+
+  try {
+    if (body.action === 'receipt') return await fetchReceipt(body.url, corsHeaders)
+    if (body.action === 'catalog') return await fetchCatalog(body.query, body.store, corsHeaders)
+    if (body.action === 'normalize') return await normalizeItems(body.items, corsHeaders)
+    return response('Unsupported action', 400, corsHeaders)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Upstream request failed'
+    return response(message, 502, corsHeaders)
+  }
+})
+
+async function fetchReceipt(value: unknown, corsHeaders: HeadersInit) {
+  if (typeof value !== 'string' || !value.trim()) return response('Missing receipt URL', 400, corsHeaders)
+
+  let receiptUrl: URL
+  try {
+    receiptUrl = new URL(value)
+  } catch {
+    return response('Invalid receipt URL', 400, corsHeaders)
+  }
+
+  if (receiptUrl.protocol !== 'https:' || !RECEIPT_HOSTS.has(receiptUrl.hostname)) {
+    return response('Receipt host is not allowed', 400, corsHeaders)
+  }
+
+  const upstream = await fetch(receiptUrl, {
+    headers: {
+      Accept: 'text/html,application/json,text/plain,*/*',
+      'User-Agent': 'groceries-app-receipt-import/1.0',
+    },
+    signal: AbortSignal.timeout(15_000),
+  })
+
+  const declaredLength = Number(upstream.headers.get('content-length') || 0)
+  if (declaredLength > MAX_RECEIPT_BYTES) return response('Receipt response is too large', 413, corsHeaders)
+
+  const text = await upstream.text()
+  if (new TextEncoder().encode(text).byteLength > MAX_RECEIPT_BYTES) {
+    return response('Receipt response is too large', 413, corsHeaders)
+  }
+
+  return new Response(text, {
+    status: upstream.status,
+    headers: {
+      ...corsHeaders,
+      'Cache-Control': 'no-store',
+      'Content-Type': upstream.headers.get('content-type') || 'text/plain; charset=utf-8',
+    },
+  })
+}
+
+async function fetchCatalog(queryValue: unknown, storeValue: unknown, corsHeaders: HeadersInit) {
+  const query = typeof queryValue === 'string' ? queryValue.trim() : ''
+  const store = typeof storeValue === 'string' && /^\d{1,8}$/.test(storeValue) ? storeValue : '331'
+  if (!query || query.length > 200) return response('Invalid catalog query', 400, corsHeaders)
+
+  const upstream = await fetch('https://www.rami-levy.co.il/api/catalog?', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json, text/plain, */*',
+      'Content-Type': 'application/json;charset=UTF-8',
+      'User-Agent': 'groceries-app-catalog-match/1.0',
+      locale: 'he',
+      origin: 'https://www.rami-levy.co.il',
+      referer: 'https://www.rami-levy.co.il/he',
+    },
+    body: JSON.stringify({ q: query, aggs: 1, store }),
+    signal: AbortSignal.timeout(15_000),
+  })
+
+  if (!upstream.ok && /^\d{7,14}$/.test(query)) {
+    const fallback = await fetchOpenFoodFacts(query, corsHeaders)
+    if (fallback) return fallback
+  }
+
+  return new Response(await upstream.text(), {
+    status: upstream.status,
+    headers: {
+      ...corsHeaders,
+      'Cache-Control': 'no-store',
+      'Content-Type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
+    },
+  })
+}
+
+async function fetchOpenFoodFacts(barcode: string, corsHeaders: HeadersInit) {
+  const fields = 'code,product_name_he,product_name,brands,quantity,image_front_url,image_url'
+  const upstream = await fetch(
+    `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}.json?fields=${fields}`,
+    {
+      headers: { Accept: 'application/json', 'User-Agent': 'groceries-app/1.0 (receipt metadata fallback)' },
+      signal: AbortSignal.timeout(15_000),
+    }
+  )
+  if (!upstream.ok) return null
+
+  const payload = await upstream.json()
+  const product = payload?.product
+  const name = product?.product_name_he || product?.product_name
+  if (payload?.status !== 1 || !product || !name) return null
+
+  const mapped = {
+    code: String(product.code || barcode),
+    name: String(name),
+    manufacturer: String(product.brands || ''),
+    unitQty: String(product.quantity || ''),
+    imageUrl: String(product.image_front_url || product.image_url || ''),
+    source: 'open_food_facts',
+  }
+
+  return new Response(JSON.stringify({ products: [mapped] }), {
+    headers: {
+      ...corsHeaders,
+      'Cache-Control': 'public, max-age=3600',
+      'Content-Type': 'application/json; charset=utf-8',
+    },
+  })
+}
+
+async function normalizeItems(value: unknown, corsHeaders: HeadersInit) {
+  const apiKey = Deno.env.get('GEMINI_API_KEY')
+  if (!apiKey) return response('Gemini is not configured', 503, corsHeaders)
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_AI_ITEMS) {
+    return response(`Expected between 1 and ${MAX_AI_ITEMS} items`, 400, corsHeaders)
+  }
+
+  const items = value.map(normalizeAiInput).filter((item): item is AiInput => item !== null)
+  if (items.length !== value.length) return response('Invalid normalization input', 400, corsHeaders)
+
+  const geminiResponse = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: normalizationPrompt(items) }] }],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: 'application/json',
+          responseJsonSchema: normalizationSchema(),
+        },
+      }),
+      signal: AbortSignal.timeout(30_000),
+    }
+  )
+
+  if (!geminiResponse.ok) {
+    const errorText = (await geminiResponse.text()).slice(0, 500)
+    throw new Error(`Gemini returned ${geminiResponse.status}: ${errorText}`)
+  }
+
+  const geminiPayload = await geminiResponse.json()
+  const outputText = geminiPayload?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || '').join('')
+  if (!outputText) throw new Error('Gemini returned an empty response')
+
+  let output: unknown
+  try {
+    output = JSON.parse(outputText)
+  } catch {
+    throw new Error('Gemini returned invalid JSON')
+  }
+
+  const normalized = validateAiOutput(output, items)
+  return new Response(JSON.stringify({ items: normalized }), {
+    headers: { ...corsHeaders, 'Cache-Control': 'no-store', 'Content-Type': 'application/json; charset=utf-8' },
+  })
+}
+
+function normalizeAiInput(value: unknown): AiInput | null {
+  if (!value || typeof value !== 'object') return null
+  const item = value as Record<string, unknown>
+  const index = Number(item.index)
+  const rawName = cleanString(item.raw_name, 300)
+  const currentName = cleanString(item.current_name, 300)
+  if (!Number.isInteger(index) || index < 0 || !rawName || !currentName) return null
+
+  return {
+    index,
+    raw_name: rawName,
+    current_name: currentName,
+    manufacturer: cleanString(item.manufacturer, 120),
+    unit_qty: cleanString(item.unit_qty, 120),
+    candidates: normalizeCandidates(item.candidates),
+  }
+}
+
+function normalizeCandidates(value: unknown): AiInput['candidates'] {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, 5).flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return []
+    const record = candidate as Record<string, unknown>
+    const id = cleanString(record.id, 100)
+    const name = cleanString(record.name, 300)
+    if (!id || !name) return []
+    return [{
+      id,
+      name,
+      manufacturer: cleanString(record.manufacturer, 120),
+      unit_qty: cleanString(record.unit_qty, 120),
+    }]
+  })
+}
+
+function normalizationPrompt(items: AiInput[]) {
+  return [
+    'You normalize Israeli grocery receipt items. Return Hebrew product metadata only.',
+    'Correct OCR mistakes and remove retailer/internal codes from names.',
+    'Each item may include candidates from the existing foods database.',
+    'Choose matched_food_id when a candidate represents the same real product despite spelling errors, word order, abbreviations, or a clearly incorrect receipt unit.',
+    'Do not match merely because products share a broad category. Different brands, flavors, fat percentages, or package variants are different products.',
+    'When choosing a candidate, copy its exact id into matched_food_id. Otherwise return an empty string.',
+    'Classify is_food as true only for food or drink intended for human consumption.',
+    'Cleaning products, cosmetics, hygiene products, paper goods, kitchen supplies, balloons, and other household items are not food.',
+    'food_confidence is the independent confidence in that food/non-food classification.',
+    'Preserve meaningful product variants such as scent, fat percentage, or package type.',
+    'Manufacturer must be copied only from a supplied manufacturer field or an explicit brand in the supplied names.',
+    'Never substitute a different brand and never change the product category (for example milk must remain milk, not yogurt).',
+    'The numeric quantity must come from the supplied text. Correct the unit label when the supplied unit is physically impossible.',
+    'Use physical common sense to correct an obviously corrupted unit: solid produce such as bananas is measured in grams or kilograms, never milliliters; liquids use milliliters or liters.',
+    'Never guess missing facts. Use an empty string when a manufacturer or unit cannot be established.',
+    'Confidence is 0 to 1 and must be below 0.7 whenever a fact is uncertain.',
+    'Keep every input index exactly once and do not add products.',
+    JSON.stringify(items),
+  ].join('\n')
+}
+
+function normalizationSchema() {
+  return {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            index: { type: 'integer' },
+            name: { type: 'string' },
+            manufacturer: { type: 'string' },
+            unit_qty: { type: 'string' },
+            matched_food_id: { type: 'string' },
+            is_food: { type: 'boolean' },
+            food_confidence: { type: 'number', minimum: 0, maximum: 1 },
+            confidence: { type: 'number', minimum: 0, maximum: 1 },
+          },
+          required: ['index', 'name', 'manufacturer', 'unit_qty', 'matched_food_id', 'is_food', 'food_confidence', 'confidence'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['items'],
+    additionalProperties: false,
+  }
+}
+
+function validateAiOutput(value: unknown, inputs: AiInput[]) {
+  if (!value || typeof value !== 'object' || !Array.isArray((value as Record<string, unknown>).items)) {
+    throw new Error('Gemini response did not contain items')
+  }
+
+  const expectedLength = inputs.length
+  const seen = new Set<number>()
+  const items = ((value as { items: Array<Record<string, unknown>> }).items).map((item) => {
+    const index = Number(item.index)
+    const confidence = Number(item.confidence)
+    const foodConfidence = Number(item.food_confidence)
+    const isFood = typeof item.is_food === 'boolean' ? item.is_food : true
+    const name = cleanString(item.name, 300)
+    if (!Number.isInteger(index) || index < 0 || index >= expectedLength || seen.has(index) || !name) {
+      throw new Error('Gemini returned an invalid item index or name')
+    }
+    seen.add(index)
+    const input = inputs[index]
+    const requestedMatchId = cleanString(item.matched_food_id, 100)
+    const matchedCandidate = input.candidates.find((candidate) => candidate.id === requestedMatchId)
+    if (matchedCandidate) {
+      const evidence = `${input.raw_name} ${input.current_name} ${input.manufacturer} ${input.unit_qty}`
+      const aiManufacturer = supportedManufacturer(cleanString(item.manufacturer, 120), evidence, input.manufacturer)
+      const aiUnit = supportedUnit(cleanString(item.unit_qty, 120), evidence)
+      return {
+        index,
+        name: matchedCandidate.name,
+        manufacturer: matchedCandidate.manufacturer || aiManufacturer.value,
+        unit_qty: matchedCandidate.unit_qty || aiUnit.value,
+        matched_food_id: matchedCandidate.id,
+        is_food: isFood,
+        food_confidence: Number.isFinite(foodConfidence) ? Math.max(0, Math.min(1, foodConfidence)) : 0,
+        confidence: Number.isFinite(confidence) && aiManufacturer.supported && aiUnit.supported
+          ? Math.max(0, Math.min(1, confidence))
+          : 0.49,
+      }
+    }
+
+    const evidence = `${input.raw_name} ${input.current_name} ${input.manufacturer} ${input.unit_qty}`
+    const nameIsSupported = hasWordOverlap(name, `${input.raw_name} ${input.current_name}`)
+    const manufacturer = supportedManufacturer(cleanString(item.manufacturer, 120), evidence, input.manufacturer)
+    const unitQty = supportedUnit(cleanString(item.unit_qty, 120), evidence)
+    const safeConfidence = nameIsSupported && manufacturer.supported && unitQty.supported
+      ? confidence
+      : Math.min(confidence, 0.49)
+
+    return {
+      index,
+      name: nameIsSupported ? name : input.current_name,
+      manufacturer: manufacturer.value,
+      unit_qty: unitQty.value,
+      matched_food_id: '',
+      is_food: isFood,
+      food_confidence: Number.isFinite(foodConfidence) ? Math.max(0, Math.min(1, foodConfidence)) : 0,
+      confidence: Number.isFinite(safeConfidence) ? Math.max(0, Math.min(1, safeConfidence)) : 0,
+    }
+  })
+
+  if (items.length !== expectedLength || seen.size !== expectedLength) throw new Error('Gemini omitted receipt items')
+  return items
+}
+
+function hasWordOverlap(candidate: string, evidence: string) {
+  const candidateWords = meaningfulWords(candidate)
+  const evidenceWords = new Set(meaningfulWords(evidence))
+  return candidateWords.some((word) => evidenceWords.has(word))
+}
+
+function meaningfulWords(value: string) {
+  return normalizeForCompare(value)
+    .split(' ')
+    .filter((word) => word.length >= 2 && !/^\d+(?:[.,]\d+)?%?$/.test(word))
+}
+
+function supportedManufacturer(value: string, evidence: string, suppliedManufacturer: string) {
+  if (!value) return { value: '', supported: true }
+  const normalizedValue = normalizeForCompare(value)
+  const normalizedEvidence = normalizeForCompare(evidence)
+  const normalizedSupplied = normalizeForCompare(suppliedManufacturer)
+  const supported = normalizedValue === normalizedSupplied || normalizedEvidence.includes(normalizedValue)
+  return { value: supported ? value : '', supported }
+}
+
+function supportedUnit(value: string, evidence: string) {
+  if (!value) return { value: '', supported: true }
+  const numbers = value.match(/\d+(?:[.,]\d+)?/g) || []
+  const normalizedEvidence = normalizeForCompare(evidence)
+  const supported = numbers.every((number) => normalizedEvidence.includes(number.replace(',', '.')))
+  return { value: supported ? value : '', supported }
+}
+
+function normalizeForCompare(value: string) {
+  return value
+    .toLocaleLowerCase('he')
+    .replace(/[,]/g, '.')
+    .replace(/[^\p{L}\p{N}%.]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function cleanString(value: unknown, maxLength: number) {
+  if (typeof value !== 'string') return ''
+  return value.replace(/\s+/g, ' ').trim().slice(0, maxLength)
+}
+
+function isAllowedOrigin(origin: string) {
+  if (ALLOWED_ORIGINS.has(origin)) return true
+  try {
+    const url = new URL(origin)
+    return (url.hostname === 'localhost' || url.hostname === '127.0.0.1') && ['http:', 'https:'].includes(url.protocol)
+  } catch {
+    return false
+  }
+}
+
+function buildCorsHeaders(origin: string) {
+  return {
+    'Access-Control-Allow-Headers': 'apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Origin': isAllowedOrigin(origin) ? origin : 'null',
+    Vary: 'Origin',
+  }
+}
+
+function response(body: string, status: number, corsHeaders: HeadersInit) {
+  return new Response(body, {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'text/plain; charset=utf-8' },
+  })
+}

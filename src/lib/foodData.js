@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { isNonFoodProduct } from './productRules'
 
 export const DEFAULT_MANUFACTURER = 'רמי לוי'
 
@@ -316,16 +317,18 @@ function normalizeFood(food) {
 function normalizeFoodResult(result) {
   return {
     ...result,
-    data: (result.data || []).map(normalizeFood),
+    data: (result.data || []).map(normalizeFood).filter((food) => !isNonFoodProduct(food)),
   }
 }
 
 function normalizeNestedFoodResult(result) {
   return {
     ...result,
-    data: (result.data || []).map((row) => ({
-      ...row,
-      food: normalizeFood(row.food),
-    })),
+    data: (result.data || [])
+      .map((row) => ({
+        ...row,
+        food: normalizeFood(row.food),
+      }))
+      .filter((row) => !isNonFoodProduct(row.food)),
   }
 }
