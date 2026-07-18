@@ -10,15 +10,16 @@ export default function ReceiptImportPage({ session }) {
   const [receiptUrl, setReceiptUrl] = useState('')
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
   const ownerId = session.role === 'shopper' ? session.shops_for_user_id : session.user_id
   const totalQuantity = useMemo(() => items.reduce((sum, item) => sum + item.quantity, 0), [items])
 
-  async function importReceipt(event) {
+  async function scanReceipt(event) {
     event.preventDefault()
-    if (!ownerId || !receiptUrl.trim()) return
+    if (!receiptUrl.trim()) return
 
     setLoading(true)
     setError('')
@@ -35,15 +36,31 @@ export default function ReceiptImportPage({ session }) {
 
       const enrichedItems = await enrichReceiptItems(parsed)
       if (enrichedItems.length === 0) throw new Error('לא נמצאו מוצרי מזון להוספה בקבלה.')
-      const itemFoods = await ensureFoods(enrichedItems)
-      await addInventoryQuantities(ownerId, itemFoods)
       setItems(enrichedItems)
-      setSuccess(`נוספו ${enrichedItems.length} מוצרים למלאי הבית.`)
-      setReceiptUrl('')
-    } catch (importError) {
-      setError(importError.message || 'לא הצלחתי לייבא את הקבלה. נסו שוב.')
+    } catch (scanError) {
+      setError(scanError.message || 'לא הצלחתי לסרוק את הקבלה. נסו שוב.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function importReceipt() {
+    if (!ownerId || items.length === 0) return
+
+    setSaving(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const itemFoods = await ensureFoods(items)
+      await addInventoryQuantities(ownerId, itemFoods)
+      setSuccess(`נוספו ${items.length} מוצרים למלאי הבית.`)
+      setItems([])
+      setReceiptUrl('')
+    } catch (saveError) {
+      setError(saveError.message || 'לא הצלחתי להוסיף את המוצרים למלאי. נסו שוב.')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -60,11 +77,11 @@ export default function ReceiptImportPage({ session }) {
       <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
         <h2 className="text-2xl font-black">סריקת קבלה</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          הדביקו קישור לקבלה מרמי לוי. המוצרים שיזוהו יתווספו ישירות למלאי הבית.
+          הדביקו קישור לקבלה מרמי לוי, בדקו את המוצרים שזוהו, ואז הוסיפו אותם למלאי הבית.
         </p>
       </div>
 
-      <form className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900" onSubmit={importReceipt}>
+      <form className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900" onSubmit={scanReceipt}>
         <label className="text-sm font-black text-slate-600 dark:text-slate-300" htmlFor="receipt-url">
           קישור קבלה
         </label>
@@ -83,17 +100,25 @@ export default function ReceiptImportPage({ session }) {
           disabled={loading || !receiptUrl.trim()}
           type="submit"
         >
-          {loading ? 'סורק ומוסיף...' : 'הוספת מוצרי הקבלה למלאי'}
+          {loading ? 'סורק...' : 'סריקת קבלה'}
         </button>
       </form>
 
       {items.length > 0 ? (
         <div className="sticky top-[73px] z-20 space-y-3 rounded-2xl border border-rose-100 bg-orange-50/95 p-2 shadow-xl backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
-          <div className="px-1">
+          <div className="flex items-center justify-between gap-3 px-1">
             <div>
-              <h3 className="text-sm font-black uppercase tracking-wide text-rose-700 dark:text-cyan-300">פריטים שנוספו למלאי</h3>
+              <h3 className="text-sm font-black uppercase tracking-wide text-rose-700 dark:text-cyan-300">פריטים שזוהו</h3>
               <p className="text-sm text-slate-500 dark:text-slate-400">{items.length} מוצרים, כמות כוללת {totalQuantity}</p>
             </div>
+            <button
+              className="rounded-xl bg-cyan-500 px-4 py-3 font-black text-slate-950 disabled:opacity-60"
+              disabled={saving}
+              onClick={importReceipt}
+              type="button"
+            >
+              {saving ? 'מוסיף...' : 'הוספה למלאי'}
+            </button>
           </div>
 
           <div className="max-h-[55dvh] space-y-2 overflow-auto pe-1">
