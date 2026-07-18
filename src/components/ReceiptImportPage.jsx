@@ -6,74 +6,44 @@ import { fetchCatalogFromServer, normalizeReceiptItemsWithAi } from '../lib/rece
 import { supabase } from '../lib/supabase'
 import { isNonFoodProduct } from '../lib/productRules'
 
-const sampleUrl = 'https://digi.rami-levy.co.il/hwxCQZ4BpGmiVYbEqGcU'
-
 export default function ReceiptImportPage({ session }) {
-  const [receiptUrl, setReceiptUrl] = useState(sampleUrl)
-  const [receiptText, setReceiptText] = useState('')
+  const [receiptUrl, setReceiptUrl] = useState('')
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
   const ownerId = session.role === 'shopper' ? session.shops_for_user_id : session.user_id
-  const receiptDataUrl = ramiReceiptDataUrl(receiptUrl)
   const totalQuantity = useMemo(() => items.reduce((sum, item) => sum + item.quantity, 0), [items])
 
-  async function scanReceipt(pastedText = '') {
+  async function importReceipt(event) {
+    event.preventDefault()
+    if (!ownerId || !receiptUrl.trim()) return
+
     setLoading(true)
     setError('')
     setSuccess('')
     setItems([])
 
     try {
-      const raw = pastedText.trim() || receiptText.trim() || (await fetchReceiptText(receiptUrl.trim()))
+      validateReceiptUrl(receiptUrl)
+      const raw = await fetchReceiptText(receiptUrl.trim())
       const parsed = parseReceiptItems(raw)
       if (parsed.length === 0) {
-        setError('לא נמצאו מוצרים בקבלה. אם הקישור חסום, פתחו אותו בטלפון והדביקו כאן את טקסט הקבלה.')
-      } else {
-        setItems(await enrichReceiptItems(parsed))
+        throw new Error('לא נמצאו מוצרים בקבלה.')
       }
-    } catch (scanError) {
-      if (receiptDataUrl && !receiptText.trim() && !pastedText.trim()) {
-        setError('רמי לוי חסמו את הסריקה הישירה. פתחו את נתוני הקבלה, העתיקו הכול, חזרו לכאן ולחצו על ״הדבקה מהלוח וסריקה״.')
-      } else {
-        setError(scanError.message || 'לא הצלחתי לסרוק את הקבלה. נסו שוב.')
-      }
+
+      const enrichedItems = await enrichReceiptItems(parsed)
+      if (enrichedItems.length === 0) throw new Error('לא נמצאו מוצרי מזון להוספה בקבלה.')
+      const itemFoods = await ensureFoods(enrichedItems)
+      await addInventoryQuantities(ownerId, itemFoods)
+      setItems(enrichedItems)
+      setSuccess(`נוספו ${enrichedItems.length} מוצרים למלאי הבית.`)
+      setReceiptUrl('')
+    } catch (importError) {
+      setError(importError.message || 'לא הצלחתי לייבא את הקבלה. נסו שוב.')
     } finally {
       setLoading(false)
-    }
-  }
-
-  async function pasteAndScanReceipt() {
-    try {
-      const clipboardText = await navigator.clipboard.readText()
-      if (!clipboardText.trim()) throw new Error('הלוח ריק. העתיקו תחילה את נתוני הקבלה.')
-      setReceiptText(clipboardText)
-      await scanReceipt(clipboardText)
-    } catch (clipboardError) {
-      setError(clipboardError.message || 'לא הצלחתי לקרוא מהלוח. הדביקו את הנתונים ידנית.')
-    }
-  }
-
-  async function importReceipt() {
-    if (!ownerId || items.length === 0) return
-
-    setSaving(true)
-    setError('')
-    setSuccess('')
-
-    try {
-      const itemFoods = await ensureFoods(items)
-      await addInventoryQuantities(ownerId, itemFoods)
-      setSuccess(`נוספו ${items.length} מוצרים למלאי הבית.`)
-      setItems([])
-      setReceiptText('')
-    } catch (saveError) {
-      setError(saveError.message)
-    } finally {
-      setSaving(false)
     }
   }
 
@@ -90,11 +60,11 @@ export default function ReceiptImportPage({ session }) {
       <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
         <h2 className="text-2xl font-black">סריקת קבלה</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          הדביקו קישור או טקסט קבלה מרמי לוי, בדקו את הפריטים, ואז הוסיפו אותם למלאי הבית.
+          הדביקו קישור לקבלה מרמי לוי. המוצרים שיזוהו יתווספו ישירות למלאי הבית.
         </p>
       </div>
 
-      <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
+      <form className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900" onSubmit={importReceipt}>
         <label className="text-sm font-black text-slate-600 dark:text-slate-300" htmlFor="receipt-url">
           קישור קבלה
         </label>
@@ -108,63 +78,22 @@ export default function ReceiptImportPage({ session }) {
           value={receiptUrl}
         />
 
-        {receiptDataUrl ? (
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-            אם הסריקה האוטומטית חסומה,{' '}
-            <a className="font-black text-rose-700 underline dark:text-cyan-300" href={receiptDataUrl} rel="noreferrer" target="_blank">
-              פתחו את נתוני הקבלה
-            </a>
-            , העתיקו הכול והדביקו בשדה הבא. אין לשתף את הנתונים עם אדם אחר.
-          </p>
-        ) : null}
-
-        <label className="mt-4 block text-sm font-black text-slate-600 dark:text-slate-300" htmlFor="receipt-text">
-          טקסט קבלה להדבקה
-        </label>
-        <textarea
-          className="mt-2 min-h-32 w-full rounded-xl border border-rose-200 bg-white px-3 py-3 text-base outline-none focus:border-rose-600 focus:ring-4 focus:ring-rose-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-rose-900/40"
-          id="receipt-text"
-          onChange={(event) => setReceiptText(event.target.value)}
-          placeholder="אם הקישור לא נטען, הדביקו כאן את תוכן הקבלה."
-          value={receiptText}
-        />
-
-        {receiptDataUrl ? (
-          <button
-            className="mt-2 h-11 w-full rounded-xl border border-cyan-500 px-4 font-black text-cyan-800 disabled:opacity-60 dark:text-cyan-300"
-            disabled={loading}
-            onClick={pasteAndScanReceipt}
-            type="button"
-          >
-            הדבקה מהלוח וסריקה
-          </button>
-        ) : null}
-
         <button
           className="mt-3 h-12 w-full rounded-xl bg-rose-600 px-4 font-black text-white disabled:opacity-60 dark:bg-cyan-400 dark:text-slate-950"
-          disabled={loading || (!receiptUrl.trim() && !receiptText.trim())}
-          onClick={() => scanReceipt()}
-          type="button"
+          disabled={loading || !receiptUrl.trim()}
+          type="submit"
         >
-          {loading ? 'סורק...' : 'סריקת קבלה'}
+          {loading ? 'סורק ומוסיף...' : 'הוספת מוצרי הקבלה למלאי'}
         </button>
-      </div>
+      </form>
 
       {items.length > 0 ? (
         <div className="sticky top-[73px] z-20 space-y-3 rounded-2xl border border-rose-100 bg-orange-50/95 p-2 shadow-xl backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
-          <div className="flex items-center justify-between gap-3 px-1">
+          <div className="px-1">
             <div>
-              <h3 className="text-sm font-black uppercase tracking-wide text-rose-700 dark:text-cyan-300">פריטים שזוהו</h3>
+              <h3 className="text-sm font-black uppercase tracking-wide text-rose-700 dark:text-cyan-300">פריטים שנוספו למלאי</h3>
               <p className="text-sm text-slate-500 dark:text-slate-400">{items.length} מוצרים, כמות כוללת {totalQuantity}</p>
             </div>
-            <button
-              className="rounded-xl bg-cyan-500 px-4 py-3 font-black text-slate-950 disabled:opacity-60"
-              disabled={saving}
-              onClick={importReceipt}
-              type="button"
-            >
-              {saving ? 'מוסיף...' : 'הוספה למלאי'}
-            </button>
           </div>
 
           <div className="max-h-[55dvh] space-y-2 overflow-auto pe-1">
@@ -178,15 +107,14 @@ export default function ReceiptImportPage({ session }) {
   )
 }
 
-function ramiReceiptDataUrl(value) {
+function validateReceiptUrl(value) {
   try {
     const url = new URL(value)
-    if (url.hostname !== 'digi.rami-levy.co.il') return null
-    const receiptId = url.pathname.split('/').filter(Boolean).at(-1) || ''
-    if (!/^[A-Za-z0-9_-]{10,100}$/.test(receiptId)) return null
-    return `https://digi-api.rami-levy.co.il/api/client/documents/${encodeURIComponent(receiptId)}`
+    if (url.protocol !== 'https:' || url.hostname !== 'digi.rami-levy.co.il') {
+      throw new Error('יש להדביק קישור קבלה תקין של רמי לוי.')
+    }
   } catch {
-    return null
+    throw new Error('יש להדביק קישור קבלה תקין של רמי לוי.')
   }
 }
 
