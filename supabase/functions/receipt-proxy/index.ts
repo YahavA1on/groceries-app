@@ -63,54 +63,17 @@ async function fetchReceipt(value: unknown, corsHeaders: HeadersInit) {
     return response('Receipt host is not allowed', 400, corsHeaders)
   }
 
-  const receiptId = receiptUrl.pathname.split('/').filter(Boolean).at(-1) || ''
-  if (!/^[A-Za-z0-9_-]{10,100}$/.test(receiptId)) {
-    return response('Invalid receipt ID', 400, corsHeaders)
-  }
-
-  // Match the working local scraper first: fetch the public receipt page, whose
-  // server-rendered HTML contains the product rows consumed by parseReceiptItems.
-  const receiptPage = await fetch(receiptUrl, {
+  // Restore the original production scraper from 7b745f9. Rami Levy accepted
+  // this small server request; later browser impersonation/API fallback logic
+  // caused the deployed scraper to be rejected before parsing could begin.
+  const upstream = await fetch(receiptUrl, {
     headers: {
-      Accept: 'text/html,application/xhtml+xml,application/json,text/plain,*/*',
-      'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-    },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(15_000),
-  })
-
-  if (receiptPage.ok) return forwardReceiptResponse(receiptPage, corsHeaders)
-
-  // Some receipts are not rendered in the page response. Keep the restricted
-  // document API as a deterministic fallback; Gemini never receives the URL.
-  const receiptApiUrl = `https://digi-api.rami-levy.co.il/api/client/documents/${encodeURIComponent(receiptId)}`
-  const upstream = await fetch(receiptApiUrl, {
-    headers: {
-      Accept: 'application/json, text/plain, */*',
-      'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
-      Origin: 'https://digi.rami-levy.co.il',
-      Referer: 'https://digi.rami-levy.co.il/',
-      'Sec-Fetch-Dest': 'empty',
-      'Sec-Fetch-Mode': 'cors',
-      'Sec-Fetch-Site': 'same-site',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/json,text/plain,*/*',
+      'User-Agent': 'groceries-app-receipt-import/1.0',
     },
     signal: AbortSignal.timeout(15_000),
   })
 
-  if (!upstream.ok && [401, 403].includes(upstream.status)) {
-    return response(
-      'Rami Levy blocked the production receipt scraper. No receipt data was sent to Gemini.',
-      502,
-      corsHeaders,
-    )
-  }
-
-  return forwardReceiptResponse(upstream, corsHeaders)
-}
-
-async function forwardReceiptResponse(upstream: Response, corsHeaders: HeadersInit) {
   const declaredLength = Number(upstream.headers.get('content-length') || 0)
   if (declaredLength > MAX_RECEIPT_BYTES) return response('Receipt response is too large', 413, corsHeaders)
 
