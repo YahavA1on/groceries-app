@@ -5,6 +5,7 @@ const RECEIPT_HOSTS = new Set(['digi.rami-levy.co.il'])
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024
 const MAX_AI_ITEMS = 60
 const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-flash-lite-latest'
+const BRIDGE_ENCRYPTION_CONTEXT = new TextEncoder().encode('groceries-receipt-bridge-v1')
 
 type AiInput = {
   index: number
@@ -63,6 +64,12 @@ async function fetchReceipt(value: unknown, corsHeaders: HeadersInit) {
     return response('Receipt host is not allowed', 400, corsHeaders)
   }
 
+  const bridgeUrl = Deno.env.get('RECEIPT_BRIDGE_URL')?.trim()
+  const bridgeSecret = Deno.env.get('RECEIPT_BRIDGE_SECRET')?.trim()
+  if (bridgeUrl && bridgeSecret) {
+    return fetchReceiptFromBridge(receiptUrl, bridgeUrl, bridgeSecret, corsHeaders)
+  }
+
   // Restore the original production scraper from 7b745f9. Rami Levy accepted
   // this small server request; later browser impersonation/API fallback logic
   // caused the deployed scraper to be rejected before parsing could begin.
@@ -90,6 +97,104 @@ async function fetchReceipt(value: unknown, corsHeaders: HeadersInit) {
       'Content-Type': upstream.headers.get('content-type') || 'text/plain; charset=utf-8',
     },
   })
+}
+
+async function fetchReceiptFromBridge(
+  receiptUrl: URL,
+  bridgeValue: string,
+  bridgeSecret: string,
+  corsHeaders: HeadersInit,
+) {
+  let bridgeUrl: URL
+  try {
+    bridgeUrl = new URL('/receipt', bridgeValue)
+  } catch {
+    return response('Receipt bridge URL is invalid', 503, corsHeaders)
+  }
+  if (bridgeUrl.protocol !== 'https:') return response('Receipt bridge must use HTTPS', 503, corsHeaders)
+
+  const upstream = await fetch(bridgeUrl, {
+    method: 'POST',
+    headers: {
+      Accept: 'text/html,application/json,text/plain,*/*',
+      Authorization: `Bearer ${bridgeSecret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(await encryptBridgePayload(JSON.stringify({ url: receiptUrl.toString() }), bridgeSecret)),
+    signal: AbortSignal.timeout(30_000),
+  })
+
+  if (!upstream.ok) return response(`Receipt bridge returned ${upstream.status}`, 502, corsHeaders)
+
+  let bridgeResponse: { status?: unknown; contentType?: unknown; text?: unknown }
+  try {
+    const envelope = await upstream.json()
+    bridgeResponse = JSON.parse(await decryptBridgePayload(envelope, bridgeSecret))
+  } catch {
+    return response('Receipt bridge returned an invalid encrypted response', 502, corsHeaders)
+  }
+
+  const status = Number(bridgeResponse.status)
+  const text = typeof bridgeResponse.text === 'string' ? bridgeResponse.text : ''
+  if (!Number.isInteger(status) || status < 100 || status > 599) {
+    return response('Receipt bridge returned an invalid status', 502, corsHeaders)
+  }
+  if (new TextEncoder().encode(text).byteLength > MAX_RECEIPT_BYTES) {
+    return response('Receipt response is too large', 413, corsHeaders)
+  }
+
+  return new Response(text, {
+    status,
+    headers: {
+      ...corsHeaders,
+      'Cache-Control': 'no-store',
+      'Content-Type': typeof bridgeResponse.contentType === 'string'
+        ? bridgeResponse.contentType
+        : 'text/plain; charset=utf-8',
+    },
+  })
+}
+
+async function encryptBridgePayload(value: string, secret: string) {
+  const key = await bridgeEncryptionKey(secret)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: BRIDGE_ENCRYPTION_CONTEXT },
+    key,
+    new TextEncoder().encode(value),
+  )
+  return { iv: toBase64Url(iv), data: toBase64Url(new Uint8Array(encrypted)) }
+}
+
+async function decryptBridgePayload(value: unknown, secret: string) {
+  if (!value || typeof value !== 'object') throw new Error('Invalid encrypted value')
+  const envelope = value as { iv?: unknown; data?: unknown }
+  if (typeof envelope.iv !== 'string' || typeof envelope.data !== 'string') {
+    throw new Error('Invalid encrypted value')
+  }
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: fromBase64Url(envelope.iv), additionalData: BRIDGE_ENCRYPTION_CONTEXT },
+    await bridgeEncryptionKey(secret),
+    fromBase64Url(envelope.data),
+  )
+  return new TextDecoder().decode(decrypted)
+}
+
+async function bridgeEncryptionKey(secret: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret))
+  return crypto.subtle.importKey('raw', digest, 'AES-GCM', false, ['encrypt', 'decrypt'])
+}
+
+function toBase64Url(value: Uint8Array) {
+  let binary = ''
+  for (const byte of value) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function fromBase64Url(value: string) {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4)
+  const binary = atob(padded)
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0))
 }
 
 async function fetchCatalog(queryValue: unknown, storeValue: unknown, corsHeaders: HeadersInit) {

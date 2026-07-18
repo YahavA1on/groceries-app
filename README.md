@@ -45,6 +45,34 @@ npx supabase functions deploy receipt-proxy --project-ref erfkngpyauhibcjfsszx -
 
 The receipt proxy first scrapes the server-rendered receipt page and deterministically extracts its product rows. Gemini receives only the compact product descriptions after extraction; it never receives or opens the receipt URL. Gemini normalizes names, manufacturers, package sizes, food classification, and database matches in one batch. The app keeps the deterministic result whenever Gemini is unavailable or returns confidence below `0.7`. The default normalization model is Google's rolling `gemini-flash-lite-latest` alias.
 
+### Private receipt bridge
+
+Rami Levy may block requests originating from cloud datacenters. The optional private bridge runs the verified scraper through a trusted computer and lets the Supabase function call it through an authenticated HTTPS tunnel. Receipt URLs and responses are additionally encrypted end-to-end with AES-GCM, so the tunnel carries only ciphertext.
+
+Start the bridge with a random secret of at least 32 characters:
+
+```powershell
+$env:RECEIPT_BRIDGE_SECRET='use-a-long-random-secret'
+npm run receipt-bridge
+```
+
+Install the official `cloudflared` client, or place its path in `CLOUDFLARED_PATH`. For the encrypted temporary tunnel used by this personal deployment, start everything and update the Supabase secrets with one command:
+
+```powershell
+npm run receipt-bridge:public
+```
+
+Keep that terminal and computer running while receipt scanning is available. Each restart creates a new AES-GCM key and tunnel URL and updates both Supabase secrets automatically.
+
+Expose local port `8787` through an HTTPS tunnel, then configure the same secret and the public tunnel URL in Supabase:
+
+```bash
+npx supabase secrets set RECEIPT_BRIDGE_URL=https://your-tunnel.example RECEIPT_BRIDGE_SECRET=use-a-long-random-secret --project-ref erfkngpyauhibcjfsszx
+npx supabase functions deploy receipt-proxy --project-ref erfkngpyauhibcjfsszx --no-verify-jwt
+```
+
+The tunnel URL and secret never belong in `VITE_*` variables or client code. The bridge accepts only authenticated receipt requests for `https://digi.rami-levy.co.il` and returns at most 5 MB.
+
 צד הלקוח משתמש במשתנים:
 
 ```bash
