@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import TopNotice from './TopNotice'
 import { addInventoryQuantities, DEFAULT_MANUFACTURER } from '../lib/foodData'
 import { buildFoodInsert, fetchReceiptText, parseReceiptItems } from '../lib/receiptImport'
@@ -12,22 +12,20 @@ export default function ReceiptImportPage({ session }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [qrOpen, setQrOpen] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
   const ownerId = session.role === 'shopper' ? session.shops_for_user_id : session.user_id
-  async function scanReceipt(event) {
-    event.preventDefault()
-    if (!receiptUrl.trim()) return
-
+  const scanReceiptUrl = useCallback(async (value) => {
     setLoading(true)
     setError('')
     setSuccess('')
     setItems([])
 
     try {
-      validateReceiptUrl(receiptUrl)
-      const raw = await fetchReceiptText(receiptUrl.trim())
+      const normalizedUrl = validateReceiptUrl(value)
+      const raw = await fetchReceiptText(normalizedUrl)
       const parsed = parseReceiptItems(raw)
       if (parsed.length === 0) {
         throw new Error('לא נמצאו מוצרים בקבלה.')
@@ -41,7 +39,20 @@ export default function ReceiptImportPage({ session }) {
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  function scanReceipt(event) {
+    event.preventDefault()
+    if (!receiptUrl.trim()) return
+    void scanReceiptUrl(receiptUrl)
   }
+
+  const handleQrDetected = useCallback((url) => {
+    setReceiptUrl(url)
+    setQrOpen(false)
+    void scanReceiptUrl(url)
+  }, [scanReceiptUrl])
+  const closeQrScanner = useCallback(() => setQrOpen(false), [])
 
   async function importReceipt() {
     if (!ownerId || items.length === 0) return
@@ -81,6 +92,26 @@ export default function ReceiptImportPage({ session }) {
       </div>
 
       <form className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900" onSubmit={scanReceipt}>
+        <button
+          className="mb-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-cyan-500 px-4 font-black text-slate-950 disabled:opacity-60"
+          disabled={loading}
+          onClick={() => {
+            setError('')
+            setSuccess('')
+            setQrOpen(true)
+          }}
+          type="button"
+        >
+          <QrIcon />
+          סריקת QR מהקבלה
+        </button>
+
+        <div className="mb-4 flex items-center gap-3 text-xs font-black text-slate-400">
+          <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+          <span>או הדבקת קישור</span>
+          <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+        </div>
+
         <label className="text-sm font-black text-slate-600 dark:text-slate-300" htmlFor="receipt-url">
           קישור קבלה
         </label>
@@ -102,6 +133,8 @@ export default function ReceiptImportPage({ session }) {
           {loading ? 'סורק...' : 'סריקת קבלה'}
         </button>
       </form>
+
+      {qrOpen ? <ReceiptQrScanner onClose={closeQrScanner} onDetected={handleQrDetected} /> : null}
 
       {items.length > 0 ? (
         <div className="sticky top-[73px] z-20 space-y-3 rounded-2xl border border-rose-100 bg-orange-50/95 p-2 shadow-xl backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
@@ -133,13 +166,94 @@ export default function ReceiptImportPage({ session }) {
 
 function validateReceiptUrl(value) {
   try {
-    const url = new URL(value)
+    const url = new URL(String(value).trim())
     if (url.protocol !== 'https:' || url.hostname !== 'digi.rami-levy.co.il') {
       throw new Error('יש להדביק קישור קבלה תקין של רמי לוי.')
     }
+    return url.toString()
   } catch {
     throw new Error('יש להדביק קישור קבלה תקין של רמי לוי.')
   }
+}
+
+function ReceiptQrScanner({ onClose, onDetected }) {
+  const videoRef = useRef(null)
+  const [cameraError, setCameraError] = useState('')
+  const [starting, setStarting] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    let controls = null
+    const videoElement = videoRef.current
+
+    async function startCamera() {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error('camera unavailable')
+        const { BrowserQRCodeReader } = await import('@zxing/browser')
+        const reader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 200 })
+        controls = await reader.decodeFromConstraints(
+          { audio: false, video: { facingMode: { ideal: 'environment' } } },
+          videoElement,
+          (result, _error, scannerControls) => {
+            if (!result || cancelled) return
+            try {
+              const url = validateReceiptUrl(result.getText())
+              scannerControls.stop()
+              onDetected(url)
+            } catch {
+              setCameraError('ה-QR שנסרק אינו קישור לקבלה של רמי לוי. נסו שוב.')
+            }
+          },
+        )
+        if (cancelled) controls.stop()
+      } catch (cameraStartError) {
+        if (cancelled) return
+        const denied = cameraStartError?.name === 'NotAllowedError' || cameraStartError?.name === 'PermissionDeniedError'
+        setCameraError(denied ? 'יש לאשר גישה למצלמה כדי לסרוק את הקבלה.' : 'לא ניתן לפתוח את המצלמה. אפשר להדביק את הקישור ידנית.')
+      } finally {
+        if (!cancelled) setStarting(false)
+      }
+    }
+
+    void startCamera()
+    return () => {
+      cancelled = true
+      controls?.stop()
+      const stream = videoElement?.srcObject
+      if (stream instanceof MediaStream) stream.getTracks().forEach((track) => track.stop())
+    }
+  }, [onDetected])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4" role="dialog" aria-modal="true" aria-label="סריקת קוד QR">
+      <div className="w-full max-w-md rounded-3xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xl font-black">סריקת QR</h3>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">כוונו את המצלמה לקוד שעל הקבלה.</p>
+          </div>
+          <button className="rounded-xl bg-slate-100 px-4 py-2 font-black dark:bg-slate-800" onClick={onClose} type="button">סגירה</button>
+        </div>
+
+        <div className="relative mt-4 aspect-square overflow-hidden rounded-2xl bg-black">
+          <video className="h-full w-full object-cover" muted playsInline ref={videoRef} />
+          <div className="pointer-events-none absolute inset-[12%] rounded-2xl border-4 border-cyan-400 shadow-[0_0_0_999px_rgba(0,0,0,0.2)]" />
+          {starting ? <div className="absolute inset-0 flex items-center justify-center bg-black/60 font-black text-white">פותח מצלמה...</div> : null}
+        </div>
+
+        {cameraError ? <p className="mt-3 rounded-xl bg-rose-50 p-3 text-sm font-black text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{cameraError}</p> : null}
+        <p className="mt-3 text-center text-xs text-slate-500 dark:text-slate-400">הצילום נשאר במכשיר ואינו נשלח לשרת.</p>
+      </div>
+    </div>
+  )
+}
+
+function QrIcon() {
+  return (
+    <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+      <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5M8 8h2v2H8zM14 8h2v2h-2zM8 14h2v2H8zM14 14h2v2h-2z" />
+    </svg>
+  )
 }
 
 function ReceiptItem({ item }) {

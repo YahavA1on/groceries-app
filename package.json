@@ -16,6 +16,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",
     "@tailwindcss/vite": "^4.3.0",
+    "@zxing/browser": "^0.2.1",
     "fast-xml-parser": "^5.8.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
