@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import TopNotice from './TopNotice'
-import { addInventoryQuantities } from '../lib/foodData'
+import { addInventoryQuantities, DEFAULT_MANUFACTURER } from '../lib/foodData'
 import { buildFoodInsert, fetchReceiptText, parseReceiptItems } from '../lib/receiptImport'
 import { fetchCatalogFromServer, normalizeReceiptItemsWithAi } from '../lib/receiptApi'
+import { getFoodCategory } from '../lib/foodFilters'
 import { supabase } from '../lib/supabase'
 import { isNonFoodProduct } from '../lib/productRules'
 
@@ -15,8 +16,6 @@ export default function ReceiptImportPage({ session }) {
   const [success, setSuccess] = useState('')
 
   const ownerId = session.role === 'shopper' ? session.shops_for_user_id : session.user_id
-  const totalQuantity = useMemo(() => items.reduce((sum, item) => sum + item.quantity, 0), [items])
-
   async function scanReceipt(event) {
     event.preventDefault()
     if (!receiptUrl.trim()) return
@@ -53,8 +52,8 @@ export default function ReceiptImportPage({ session }) {
 
     try {
       const itemFoods = await ensureFoods(items)
-      await addInventoryQuantities(ownerId, itemFoods)
-      setSuccess(`נוספו ${items.length} מוצרים למלאי הבית.`)
+      const { newInventoryCount } = await addInventoryQuantities(ownerId, itemFoods)
+      setSuccess(`נוספו ${newInventoryCount} מוצרים חדשים למלאי הבית.`)
       setItems([])
       setReceiptUrl('')
     } catch (saveError) {
@@ -109,7 +108,7 @@ export default function ReceiptImportPage({ session }) {
           <div className="flex items-center justify-between gap-3 px-1">
             <div>
               <h3 className="text-sm font-black uppercase tracking-wide text-rose-700 dark:text-cyan-300">פריטים שזוהו</h3>
-              <p className="text-sm text-slate-500 dark:text-slate-400">{items.length} מוצרים, כמות כוללת {totalQuantity}</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">{items.length} מוצרים ייחודיים</p>
             </div>
             <button
               className="rounded-xl bg-cyan-500 px-4 py-3 font-black text-slate-950 disabled:opacity-60"
@@ -164,7 +163,7 @@ function ReceiptItem({ item }) {
       </div>
       <div className="min-w-0 flex-1">
         <h4 className="line-clamp-2 font-black leading-tight">{item.name}</h4>
-        <p className="mt-1 truncate text-sm text-slate-500 dark:text-slate-400">{item.manufacturer || 'יצרן לא ידוע'}</p>
+        <p className="mt-1 truncate text-sm text-slate-500 dark:text-slate-400">{item.manufacturer || DEFAULT_MANUFACTURER}</p>
         <p className="mt-1 text-sm font-black text-rose-700 dark:text-cyan-300">{item.unit_qty || 'יחידה'}</p>
       </div>
       <span className="rounded-xl bg-cyan-100 px-3 py-2 text-sm font-black text-cyan-950 dark:bg-cyan-400 dark:text-slate-950">x{item.quantity}</span>
@@ -407,9 +406,9 @@ async function loadCatalogMatches(items, existingFoodByKey) {
   )
   const catalogByKey = new Map()
 
-  for (const item of missingItems) {
+  await Promise.all(missingItems.map(async (item) => {
     const query = item.barcode || item.external_id || item.name
-    if (!query) continue
+    if (!query) return
 
     try {
       const payload = await fetchCatalogFromServer(query)
@@ -428,7 +427,7 @@ async function loadCatalogMatches(items, existingFoodByKey) {
     } catch {
       // Catalog enrichment is best-effort; receipt import still works without it.
     }
-  }
+  }))
 
   return catalogByKey
 }
@@ -551,10 +550,11 @@ function preferHebrewText(primary, fallback, emptyValue) {
 }
 
 function normalizeReceiptPresentation(item) {
+  const manufacturer = preferHebrewText(item.manufacturer, null, null)
   return {
     ...item,
     name: preferHebrewText(item.name, null, 'מוצר לא מזוהה'),
-    manufacturer: preferHebrewText(item.manufacturer, null, null),
+    manufacturer: getFoodCategory(item) === 'פירות וירקות' ? DEFAULT_MANUFACTURER : manufacturer || DEFAULT_MANUFACTURER,
     unit_qty: singleUnitQty(item.unit_qty, item.name),
   }
 }
@@ -629,20 +629,37 @@ function receiptImageCandidates(item) {
 }
 
 function mergeDuplicateReceiptItems(items) {
-  const byIdentity = new Map()
+  const mergedItems = []
+  const byAlias = new Map()
   for (const item of items) {
-    const key = item.matched_food_id
-      ? `food:${item.matched_food_id}`
-      : `text:${normalizeIdentity([item.name, item.manufacturer, item.unit_qty].filter(Boolean).join('|'))}`
-    const existing = byIdentity.get(key)
+    const aliases = receiptItemAliases(item)
+    const existing = aliases.map((alias) => byAlias.get(alias)).find(Boolean)
     if (!existing) {
-      byIdentity.set(key, item)
+      const copy = { ...item }
+      mergedItems.push(copy)
+      for (const alias of aliases) byAlias.set(alias, copy)
       continue
     }
     existing.quantity = Number(existing.quantity || 0) + Number(item.quantity || 0)
     existing.image_candidates = unique([...(existing.image_candidates || []), ...(item.image_candidates || [])])
+    for (const alias of aliases) byAlias.set(alias, existing)
   }
-  return Array.from(byIdentity.values())
+  return mergedItems
+}
+
+function receiptItemAliases(item) {
+  const aliases = []
+  if (item.matched_food_id) aliases.push(`food:${item.matched_food_id}`)
+  if (item.barcode) aliases.push(`barcode:${normalizeIdentity(item.barcode)}`)
+  if (item.external_id) aliases.push(`external:${normalizeIdentity(item.external_id)}`)
+
+  const name = normalizeIdentity(item.name)
+  const manufacturer = normalizeIdentity(item.manufacturer)
+  const unit = normalizeIdentity(item.unit_qty)
+  if (name) {
+    aliases.push(`product:${name}|${manufacturer}|${unit}`)
+  }
+  return unique(aliases)
 }
 
 function normalizeIdentity(value) {

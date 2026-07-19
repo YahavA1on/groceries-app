@@ -43,7 +43,7 @@ export async function addInventoryQuantities(ownerId, itemFoods, purchasedAt = n
   }
 
   const foodIds = Array.from(quantityByFoodId.keys())
-  if (!ownerId || foodIds.length === 0) return
+  if (!ownerId || foodIds.length === 0) return { newInventoryCount: 0 }
 
   const { data: existingRows, error: existingError } = await supabase
     .from('inventory')
@@ -54,19 +54,29 @@ export async function addInventoryQuantities(ownerId, itemFoods, purchasedAt = n
   if (existingError) throw existingError
 
   const existingByFoodId = new Map((existingRows || []).map((row) => [row.food_id, row]))
+  const newInventoryCount = foodIds.filter((foodId) => !existingByFoodId.has(foodId)).length
+  const expectedQuantities = new Map()
 
-  for (const [foodId, addedQuantity] of quantityByFoodId) {
+  await Promise.all(Array.from(quantityByFoodId, async ([foodId, addedQuantity]) => {
     const existing = existingByFoodId.get(foodId)
     const nextQuantity = Number(existing?.quantity || 0) + addedQuantity
+    expectedQuantities.set(foodId, nextQuantity)
 
     if (existing) {
       await updateInventoryRow(ownerId, foodId, nextQuantity, purchasedAt)
     } else {
       await insertInventoryRow(ownerId, foodId, addedQuantity, purchasedAt)
     }
+  }))
 
-    await verifyInventoryQuantity(ownerId, foodId, nextQuantity)
+  const savedQuantities = await fetchInventoryQuantities(ownerId, foodIds)
+  for (const [foodId, expectedQuantity] of expectedQuantities) {
+    if (savedQuantities.get(foodId) !== expectedQuantity) {
+      throw new Error('Inventory save did not persist. Check the inventory table policies for this user.')
+    }
   }
+
+  return { newInventoryCount }
 }
 
 export async function fetchFoodsWithOptionalCategory() {
