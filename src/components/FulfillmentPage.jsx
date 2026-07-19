@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
+import ShoppingNotes from './ShoppingNotes'
 import TopNotice from './TopNotice'
 import { DEFAULT_MANUFACTURER, addInventoryQuantities, applyRelatedRatings, fetchInventoryQuantities, fetchRatingsByOwner, fetchShoppingListItems } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRatingMood } from '../lib/foodFilters'
@@ -141,6 +142,8 @@ export default function FulfillmentPage({ session }) {
         <h2 className="text-2xl font-black">קניות עבור {ownerName || 'הבעלים'}</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">העבירו פריטים לעגלה ואז סיימו את הקניה.</p>
       </div>
+
+      <ShoppingNotes ownerId={ownerId} session={session} />
 
       <FoodFilterBar
         category={category}

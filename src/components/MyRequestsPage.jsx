@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
+import ShoppingNotes from './ShoppingNotes'
 import TopNotice from './TopNotice'
 import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchRatingsByOwner, fetchShoppingListItems } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupRowsByRank } from '../lib/foodFilters'
@@ -95,6 +96,8 @@ export default function MyRequestsPage({ session }) {
         <h2 className="text-2xl font-black">הבקשות שלי</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">פריטים שממתינים לקונה ופריטים שכבר נכנסו לעגלה.</p>
       </div>
+
+      <ShoppingNotes ownerId={session.user_id} session={session} />
 
       <FoodFilterBar
         category={category}

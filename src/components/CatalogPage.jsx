@@ -128,18 +128,18 @@ export default function CatalogPage({ onSubmitted, session }) {
     }
 
     clearCart()
-    setSuccess('הבקשה נשלחה לרשימת הקניות.')
+    setSuccess('המוצרים נוספו לרשימת הקניות.')
     onSubmitted?.()
   }
 
   function requestSave(inCart) {
     setConfirmAction({
       inCart,
-      title: inCart ? 'שמירה במלאי' : 'שליחת בקשה',
+      title: inCart ? 'שמירה במלאי' : 'הוספה לרשימה',
       message: inCart
         ? `לשמור ${count} פריטים במלאי?`
-        : `לשלוח בקשה לקניה עם ${count} פריטים?`,
-      confirmText: inCart ? 'כן, שמירה במלאי' : 'כן, שליחת בקשה',
+        : `להוסיף ${count} פריטים לרשימת הקניות?`,
+      confirmText: inCart ? 'כן, שמירה במלאי' : 'כן, הוסף לרשימה',
     })
   }
 
@@ -369,7 +369,7 @@ export default function CatalogPage({ onSubmitted, session }) {
               onClick={() => requestSave(false)}
               type="button"
             >
-              {submitting ? 'שולח...' : 'שליחת בקשה'}
+              {submitting ? 'מוסיף...' : 'הוסף לרשימה'}
             </button>
           </div>
         </div>
@@ -377,7 +377,7 @@ export default function CatalogPage({ onSubmitted, session }) {
 
       <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
         <h2 className="text-2xl font-black">הוספת מוצרים</h2>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">כל משתמש יכול להעלות בקשה שיקנו עבורו.</p>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">בחרו מוצרים והוסיפו אותם לרשימת הקניות.</p>
       </div>
 
       <FoodFilterBar
