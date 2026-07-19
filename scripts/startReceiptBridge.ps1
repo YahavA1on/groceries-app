@@ -10,6 +10,20 @@ $tunnelErr = Join-Path $env:TEMP 'groceries-receipt-tunnel.err.log'
 $bridge = $null
 $tunnel = $null
 
+try {
+  $existingBridge = Invoke-WebRequest `
+    -Uri 'http://127.0.0.1:8787/health' `
+    -UseBasicParsing `
+    -TimeoutSec 2
+  if ($existingBridge.StatusCode -eq 200 -and $existingBridge.Content.Trim() -eq 'ok') {
+    Write-Host 'The encrypted receipt bridge is already running.' -ForegroundColor Green
+    Write-Host 'You do not need to start another copy. The website can use the existing bridge.'
+    exit 0
+  }
+} catch {
+  # No healthy bridge is listening, so continue with a normal startup.
+}
+
 Remove-Item $bridgeOut,$bridgeErr,$tunnelOut,$tunnelErr -ErrorAction SilentlyContinue
 
 try {
