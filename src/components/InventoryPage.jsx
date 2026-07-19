@@ -4,9 +4,6 @@ import TopNotice from './TopNotice'
 import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchInventoryRows, fetchRatingsByOwner, setInventoryQuantity } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRank, groupRowsByRatingMood } from '../lib/foodFilters'
 import { formatDate } from '../lib/format'
-import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
-
-const realtimeTables = ['inventory', 'ratings']
 
 export default function InventoryPage({ session }) {
   const [rows, setRows] = useState([])
@@ -17,16 +14,16 @@ export default function InventoryPage({ session }) {
   const [notice, setNotice] = useState(null)
   const [adjustingKey, setAdjustingKey] = useState('')
 
-  const ownerId = session.role === 'shopper' ? session.shops_for_user_id : session.user_id
+  const familyId = session.family_id
 
   const loadInventory = useCallback(async () => {
-    if (!ownerId) return
+    if (!familyId) return
 
     setLoading(true)
 
     const [inventoryResult, ratingsResult] = await Promise.all([
-      fetchInventoryRows(ownerId),
-      fetchRatingsByOwner(ownerId),
+      fetchInventoryRows(session),
+      fetchRatingsByOwner(session),
     ])
 
     if (inventoryResult.error) {
@@ -41,14 +38,16 @@ export default function InventoryPage({ session }) {
       setRatings(applyRelatedRatings(foods, ratingsResult.data, ratingsResult.rows))
     }
     setLoading(false)
-  }, [ownerId])
+  }, [familyId, session])
 
   useEffect(() => {
     const timeoutId = setTimeout(loadInventory, 0)
-    return () => clearTimeout(timeoutId)
+    const intervalId = setInterval(loadInventory, 15_000)
+    return () => {
+      clearTimeout(timeoutId)
+      clearInterval(intervalId)
+    }
   }, [loadInventory])
-
-  useRealtimeRefresh(ownerId ? `inventory-${ownerId}` : null, realtimeTables, loadInventory)
 
   const categoryOptions = useMemo(() => buildCategoryOptions(rows.map((row) => row.food).filter(Boolean)), [rows])
   const filteredRows = useMemo(
@@ -69,7 +68,7 @@ export default function InventoryPage({ session }) {
     setNotice(null)
 
     try {
-      await setInventoryQuantity(ownerId, foodId, nextQuantity)
+      await setInventoryQuantity(session, foodId, nextQuantity)
       setRows((current) =>
         nextQuantity <= 0
           ? current.filter((entry) => inventoryRowKey(entry) !== rowKey)
@@ -83,11 +82,11 @@ export default function InventoryPage({ session }) {
     }
   }
 
-  if (!ownerId) {
+  if (!familyId) {
     return (
       <section className="rounded-2xl bg-white p-6 text-center shadow-sm dark:bg-slate-900">
-        <h2 className="text-2xl font-black">לא משויך בעלים</h2>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">למשתמש הקונה לא מוגדר `shops_for_user_id`.</p>
+        <h2 className="text-2xl font-black">אין שיוך למשפחה</h2>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">יש להצטרף למשפחה כדי לצפות במלאי.</p>
       </section>
     )
   }
@@ -231,5 +230,5 @@ function sortInventoryRows(rows) {
 }
 
 function inventoryRowKey(row) {
-  return `${row.owner_id || 'owner'}:${row.food_id || row.food?.id || 'food'}`
+  return `${row.family_id || 'family'}:${row.food_id || row.food?.id || 'food'}`
 }

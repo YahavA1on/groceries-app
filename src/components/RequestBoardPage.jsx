@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import TopNotice from './TopNotice'
 import { formatDate } from '../lib/format'
-import { supabase } from '../lib/supabase'
+import { fetchShoppingListItems } from '../lib/foodData'
 import { isNonFoodProduct } from '../lib/productRules'
-import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
-
-const realtimeTables = ['shopping_list']
 
 export default function RequestBoardPage({ onStartShopping, session }) {
   const [rows, setRows] = useState([])
@@ -16,28 +13,28 @@ export default function RequestBoardPage({ onStartShopping, session }) {
     setLoading(true)
     setError('')
 
-    const { data, error: queryError } = await supabase
-      .from('shopping_list')
-      .select('id, owner_id, food_id, quantity, in_cart, added_at, owner:users!shopping_list_owner_id_fkey(id, username), food:foods(id, name, manufacturer, unit_qty, picture_url)')
-      .eq('in_cart', false)
-      .order('added_at', { ascending: false })
+    const { data, error: queryError } = await fetchShoppingListItems(session)
 
     if (queryError) {
       setError(queryError.message)
       setRows([])
     } else {
-      setRows((data || []).filter((row) => row.owner_id !== session.user_id && !isNonFoodProduct(row.food)))
+      setRows((data || [])
+        .filter((row) => !row.in_cart && !isNonFoodProduct(row.food))
+        .map((row) => ({ ...row, owner: { id: session.owner_id, username: session.family_name } })))
     }
 
     setLoading(false)
-  }, [session.user_id])
+  }, [session])
 
   useEffect(() => {
     const timeoutId = setTimeout(loadRows, 0)
-    return () => clearTimeout(timeoutId)
+    const intervalId = setInterval(loadRows, 15_000)
+    return () => {
+      clearTimeout(timeoutId)
+      clearInterval(intervalId)
+    }
   }, [loadRows])
-
-  useRealtimeRefresh(`request-board-legacy-${session.user_id}`, realtimeTables, loadRows)
 
   const groups = useMemo(() => {
     const map = new Map()

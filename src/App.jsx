@@ -6,23 +6,26 @@ import FulfillmentPage from './components/FulfillmentPage'
 import InventoryPage from './components/InventoryPage'
 import MyRequestsPage from './components/MyRequestsPage'
 import ReceiptImportPage from './components/ReceiptImportPage'
-import { getCurrentSession, logout } from './lib/auth'
+import { getCurrentSession, logout, refreshCurrentSession } from './lib/auth'
 import { useCart } from './hooks/useCart'
+import { supabase } from './lib/supabase'
 
 const ownerTabs = [
   { key: 'catalog', label: 'הוספה' },
-  { key: 'my', label: 'בקשות' },
+  { key: 'my', label: 'רשימה' },
   { key: 'inventory', label: 'מלאי' },
 ]
 
 const shopperTabs = [
-  { key: 'fulfillment', label: 'קניות' },
-  { key: 'catalog', label: 'קטלוג' },
+  { key: 'fulfillment', label: 'קנייה' },
+  { key: 'catalog', label: 'הוספה' },
   { key: 'inventory', label: 'מלאי' },
 ]
 
 export default function App() {
-  const [session, setSession] = useState(() => getCurrentSession())
+  const [initialSession] = useState(() => getCurrentSession())
+  const [session, setSession] = useState(initialSession)
+  const [checkingSession, setCheckingSession] = useState(Boolean(initialSession))
   const [activeTab, setActiveTab] = useState(session?.role === 'shopper' ? 'fulfillment' : 'catalog')
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('groceries_theme') === 'dark')
 
@@ -31,13 +34,34 @@ export default function App() {
     localStorage.setItem('groceries_theme', darkMode ? 'dark' : 'light')
   }, [darkMode])
 
+  useEffect(() => {
+    if (!initialSession) return undefined
+
+    let cancelled = false
+    refreshCurrentSession().then((refreshed) => {
+      if (cancelled) return
+      setSession(refreshed)
+      setCheckingSession(false)
+      if (refreshed?.role === 'shopper') setActiveTab('fulfillment')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [initialSession])
+
   async function handleLogout() {
     await logout()
     setSession(null)
     setActiveTab('catalog')
   }
 
-  if (!session) return <AuthPage onLogin={setSession} />
+  function handleLogin(nextSession) {
+    setSession(nextSession)
+    setActiveTab(nextSession.role === 'shopper' ? 'fulfillment' : 'catalog')
+  }
+
+  if (checkingSession) return <div className="flex min-h-dvh items-center justify-center bg-slate-950 text-lg font-black text-white">בודק חיבור...</div>
+  if (!session || session.needs_password_setup) return <AuthPage existingSession={session?.needs_password_setup ? session : null} onLogin={handleLogin} />
 
   return (
     <CartProvider key={session.user_id} userId={session.user_id}>
@@ -56,6 +80,18 @@ export default function App() {
 function AppShell({ activeTab, darkMode, onLogout, onTabChange, onToggleTheme, session }) {
   const { count } = useCart()
   const tabs = session.role === 'shopper' ? shopperTabs : ownerTabs
+  const [familyDetails, setFamilyDetails] = useState(null)
+
+  useEffect(() => {
+    if (!session.family_id) return undefined
+    let cancelled = false
+    supabase.rpc('get_family_details', { p_session_token: session.token }).then(({ data }) => {
+      if (!cancelled && data) setFamilyDetails(data)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [session.family_id, session.token])
 
   const page = useMemo(() => {
     if (activeTab === 'my') return <MyRequestsPage session={session} />
@@ -72,9 +108,13 @@ function AppShell({ activeTab, darkMode, onLogout, onTabChange, onToggleTheme, s
           <div className="min-w-0">
             <p className="text-xs font-black uppercase tracking-wide text-rose-700 dark:text-cyan-300">רשימת קניות</p>
             <h1 className="truncate text-xl font-black">שלום {session.username}</h1>
+            <p className="truncate text-xs font-bold text-slate-500 dark:text-slate-400">
+              {familyDetails?.name || session.family_name}
+              {familyDetails?.invite_code ? ` · קוד ${familyDetails.invite_code}` : ''}
+            </p>
           </div>
           <div className="flex items-center gap-2">
-            <button
+            {session.member_role === 'manager' || session.is_admin ? <button
               aria-label="סריקת קבלה"
               className={`flex h-10 w-10 items-center justify-center rounded-xl text-slate-950 transition dark:text-slate-100 ${
                 activeTab === 'receipt'
@@ -90,7 +130,7 @@ function AppShell({ activeTab, darkMode, onLogout, onTabChange, onToggleTheme, s
                 <path d="M10 21h.01" />
                 <path d="M18 21h.01" />
               </svg>
-            </button>
+            </button> : null}
             <button
               className="h-10 min-w-10 rounded-xl bg-indigo-100 px-3 text-lg font-black text-indigo-950 dark:bg-indigo-500/20 dark:text-indigo-100"
               onClick={onToggleTheme}

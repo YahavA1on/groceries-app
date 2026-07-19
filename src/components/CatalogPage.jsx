@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
 import TopNotice from './TopNotice'
 import { useCart } from '../hooks/useCart'
-import { DEFAULT_MANUFACTURER, addInventoryQuantities, applyRelatedRatings, fetchFoodsWithOptionalCategory, fetchRatingsByOwner } from '../lib/foodData'
+import { DEFAULT_MANUFACTURER, addInventoryQuantities, addShoppingListItems, applyRelatedRatings, deleteFamilyRating, fetchFoodsWithOptionalCategory, fetchRatingsByOwner, saveFamilyRating } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, getFoodCategory, groupFoodsByRank, groupFoodsByRatingMood, groupItemsByCategory, matchesFoodFilters, rankMetaForRating, ratingColorClass, visibleUniqueFoods } from '../lib/foodFilters'
 import { isRateableFood } from '../lib/productRules'
 import { supabase } from '../lib/supabase'
@@ -23,9 +23,10 @@ export default function CatalogPage({ onSubmitted, session }) {
   const [editingValues, setEditingValues] = useState(null)
   const [editingBusy, setEditingBusy] = useState(false)
   const [confirmEditClose, setConfirmEditClose] = useState(false)
+  const [addingFood, setAddingFood] = useState(false)
+  const [newFoodValues, setNewFoodValues] = useState(() => emptyFoodValues())
 
-  const ownerId = session.role === 'shopper' ? session.shops_for_user_id : session.user_id
-  const canManageItems = session.role !== 'shopper'
+  const canManageItems = session.member_role === 'manager' || session.is_admin
 
   const loadFoods = useCallback(async () => {
     setLoading(true)
@@ -33,7 +34,7 @@ export default function CatalogPage({ onSubmitted, session }) {
 
     const [foodsResult, ratingsResult] = await Promise.all([
       fetchFoodsWithOptionalCategory(),
-      fetchRatingsByOwner(ownerId),
+      fetchRatingsByOwner(session),
     ])
 
     const loadedFoods = foodsResult.data || []
@@ -48,7 +49,7 @@ export default function CatalogPage({ onSubmitted, session }) {
     if (!ratingsResult.error) setRatings(applyRelatedRatings(loadedFoods, ratingsResult.data, ratingsResult.rows))
 
     setLoading(false)
-  }, [ownerId])
+  }, [session])
 
   useEffect(() => {
     const timeoutId = setTimeout(loadFoods, 0)
@@ -82,7 +83,7 @@ export default function CatalogPage({ onSubmitted, session }) {
   )
 
   async function saveShoppingList(inCart) {
-    if (cartLines.length === 0 || !ownerId) return
+    if (cartLines.length === 0 || !session.family_id) return
 
     setSubmitting(true)
     setError('')
@@ -91,7 +92,7 @@ export default function CatalogPage({ onSubmitted, session }) {
     if (inCart) {
       try {
         await addInventoryQuantities(
-          ownerId,
+          session,
           cartLines.map((item) => ({
             item: { quantity: item.quantity },
             food: { id: item.productId },
@@ -110,15 +111,11 @@ export default function CatalogPage({ onSubmitted, session }) {
     }
 
     const rows = cartLines.map((item) => ({
-      owner_id: ownerId,
       food_id: item.productId,
       quantity: item.quantity,
-      in_cart: inCart,
     }))
 
-    const { error: upsertError } = await supabase
-      .from('shopping_list')
-      .upsert(rows, { onConflict: 'owner_id,food_id' })
+    const { error: upsertError } = await addShoppingListItems(session, rows)
 
     setSubmitting(false)
 
@@ -155,15 +152,7 @@ export default function CatalogPage({ onSubmitted, session }) {
     setRatingFoodId(foodId)
     setError('')
 
-    const { error: ratingError } = await supabase.from('ratings').upsert(
-      {
-        owner_id: ownerId,
-        food_id: foodId,
-        rating,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'owner_id,food_id' }
-    )
+    const { error: ratingError } = await saveFamilyRating(session, foodId, rating)
 
     setRatingFoodId(null)
 
@@ -200,9 +189,9 @@ export default function CatalogPage({ onSubmitted, session }) {
   async function saveFoodEdit() {
     if (!editingFood || !editingValues) return
 
-    const name = editingValues.name.trim()
-    if (!name) {
-      setError('שם מוצר הוא שדה חובה.')
+    const payload = cleanFoodValues(editingValues)
+    if (!allFoodFieldsPresent(payload)) {
+      setError('כל שדות המוצר הם שדות חובה.')
       return
     }
 
@@ -210,29 +199,15 @@ export default function CatalogPage({ onSubmitted, session }) {
     setError('')
     setSuccess('')
 
-    const payload = {
-      category: editingValues.category || null,
-      manufacturer: editingValues.manufacturer.trim() || DEFAULT_MANUFACTURER,
-      name,
-      picture_url: editingValues.picture_url.trim() || null,
-      unit_qty: editingValues.unit_qty.trim() || null,
-      updated_at: new Date().toISOString(),
-    }
-    const categoryChanged = String(payload.category || '') !== String(getFoodCategory(editingFood) || '')
-
-    let { error: updateError } = await supabase.from('foods').update(payload).eq('id', editingFood.id)
-    if (updateError && /category/i.test(updateError.message || '')) {
-      if (categoryChanged) {
-        setEditingBusy(false)
-        setError('לא ניתן לשמור קטגוריה ידנית כי עמודת category חסרה או חסומה בטבלת foods.')
-        return
-      }
-
-      const fallbackPayload = { ...payload }
-      delete fallbackPayload.category
-      const fallbackResult = await supabase.from('foods').update(fallbackPayload).eq('id', editingFood.id)
-      updateError = fallbackResult.error
-    }
+    const { data: updatedFood, error: updateError } = await supabase.rpc('update_catalog_food', {
+      p_session_token: session.token,
+      p_food_id: editingFood.id,
+      p_name: payload.name,
+      p_manufacturer: payload.manufacturer,
+      p_category: payload.category,
+      p_unit_qty: payload.unit_qty,
+      p_picture_url: payload.picture_url,
+    })
 
     if (updateError) {
       setEditingBusy(false)
@@ -241,11 +216,7 @@ export default function CatalogPage({ onSubmitted, session }) {
     }
 
     if (!isRateableFood({ ...editingFood, ...payload }) || editingValues.rating === '') {
-      const { error: deleteRatingError } = await supabase
-        .from('ratings')
-        .delete()
-        .eq('owner_id', ownerId)
-        .eq('food_id', editingFood.id)
+      const { error: deleteRatingError } = await deleteFamilyRating(session, editingFood.id)
 
       if (deleteRatingError) {
         setEditingBusy(false)
@@ -267,7 +238,7 @@ export default function CatalogPage({ onSubmitted, session }) {
     }
 
     setFoods((current) =>
-      current.map((food) => (food.id === editingFood.id ? { ...food, ...payload } : food))
+      current.map((food) => (food.id === editingFood.id ? { ...food, ...updatedFood } : food))
     )
     setEditingBusy(false)
     closeEditor()
@@ -282,7 +253,10 @@ export default function CatalogPage({ onSubmitted, session }) {
     setError('')
     setSuccess('')
 
-    const { error: deleteError } = await supabase.from('foods').delete().eq('id', editingFood.id)
+    const { error: deleteError } = await supabase.rpc('delete_catalog_food', {
+      p_session_token: session.token,
+      p_food_id: editingFood.id,
+    })
 
     if (deleteError) {
       setEditingBusy(false)
@@ -300,6 +274,36 @@ export default function CatalogPage({ onSubmitted, session }) {
     setEditingBusy(false)
     closeEditor()
     setSuccess('המוצר נמחק.')
+  }
+
+  async function addManualFood() {
+    const payload = cleanFoodValues(newFoodValues)
+    if (!allFoodFieldsPresent(payload)) {
+      setError('כל שדות המוצר הם שדות חובה.')
+      return
+    }
+
+    setEditingBusy(true)
+    setError('')
+    const { data, error: addError } = await supabase.rpc('add_catalog_food', {
+      p_session_token: session.token,
+      p_name: payload.name,
+      p_manufacturer: payload.manufacturer,
+      p_category: payload.category,
+      p_unit_qty: payload.unit_qty,
+      p_picture_url: payload.picture_url,
+    })
+    setEditingBusy(false)
+
+    if (addError) {
+      setError(addError.code === '23505' ? 'המוצר כבר קיים.' : addError.message)
+      return
+    }
+
+    setFoods((current) => sortFoodsByName([...current, data]))
+    setNewFoodValues(emptyFoodValues())
+    setAddingFood(false)
+    setSuccess('המוצר נוסף למאגר.')
   }
 
   return (
@@ -376,8 +380,17 @@ export default function CatalogPage({ onSubmitted, session }) {
       ) : null}
 
       <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
-        <h2 className="text-2xl font-black">הוספת מוצרים</h2>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">בחרו מוצרים והוסיפו אותם לרשימת הקניות.</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-black">הוספת מוצרים</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">בחרו מוצרים והוסיפו אותם לרשימת הקניות.</p>
+          </div>
+          {canManageItems ? (
+            <button className="shrink-0 rounded-xl bg-cyan-500 px-3 py-3 text-sm font-black text-slate-950" onClick={() => setAddingFood(true)} type="button">
+              מוצר חדש
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <FoodFilterBar
@@ -409,7 +422,7 @@ export default function CatalogPage({ onSubmitted, session }) {
                       key={food.id}
                       onAdd={() => addProduct(food.id)}
                       onDecrement={() => changeQuantity(food.id, -1)}
-                      onEdit={canManageItems ? () => openEditor(food) : null}
+                      onEdit={canManageItems && (session.is_admin || food.created_by === session.user_id) ? () => openEditor(food) : null}
                       onIncrement={() => changeQuantity(food.id, 1)}
                       onRate={canManageItems && isRateableFood(food) ? (rating) => saveRating(food.id, rating) : null}
                       quantity={items[food.id]?.quantity || 0}
@@ -439,11 +452,23 @@ export default function CatalogPage({ onSubmitted, session }) {
           busy={editingBusy}
           categoryOptions={categoryOptions}
           food={editingFood}
-          onDelete={deleteFood}
+          onDelete={session.is_admin ? deleteFood : null}
           onRequestClose={requestCloseEditor}
           onSave={saveFoodEdit}
           onValuesChange={setEditingValues}
           values={editingValues}
+        />
+      ) : null}
+
+      {addingFood ? (
+        <FoodDetailsSheet
+          busy={editingBusy}
+          categoryOptions={categoryOptions}
+          onClose={() => setAddingFood(false)}
+          onSave={addManualFood}
+          onValuesChange={setNewFoodValues}
+          title="מוצר חדש"
+          values={newFoodValues}
         />
       ) : null}
 
@@ -648,7 +673,7 @@ function EditFoodSheet({ busy, categoryOptions, food, onDelete, onRequestClose, 
           )}
         </div>
 
-        <div className="mt-5 grid grid-cols-[1fr_auto] gap-2">
+        <div className={`mt-5 grid gap-2 ${onDelete ? 'grid-cols-[1fr_auto]' : 'grid-cols-1'}`}>
           <button
             className="rounded-xl bg-rose-600 px-3 py-3 font-black text-white disabled:opacity-60"
             disabled={busy}
@@ -657,18 +682,78 @@ function EditFoodSheet({ busy, categoryOptions, food, onDelete, onRequestClose, 
           >
             {busy ? 'שומר...' : 'שמירה'}
           </button>
-          <button
-            className="rounded-xl bg-red-50 px-3 py-3 font-black text-red-700 disabled:opacity-60 dark:bg-red-500/10 dark:text-red-200"
-            disabled={busy}
-            onClick={onDelete}
-            title="מחיקה"
-            type="button"
-          >
-            מחיקה
-          </button>
+          {onDelete ? (
+            <button
+              className="rounded-xl bg-red-50 px-3 py-3 font-black text-red-700 disabled:opacity-60 dark:bg-red-500/10 dark:text-red-200"
+              disabled={busy}
+              onClick={onDelete}
+              title="מחיקה"
+              type="button"
+            >
+              מחיקה
+            </button>
+          ) : null}
         </div>
       </div>
     </div>
+  )
+}
+
+function FoodDetailsSheet({ busy, categoryOptions, onClose, onSave, onValuesChange, title, values }) {
+  const options = categoryOptions.filter((option) => option.value !== ALL_CATEGORIES)
+
+  function setField(field, value) {
+    onValuesChange((current) => ({ ...current, [field]: value }))
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4">
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="text-xl font-black">{title}</h3>
+          <button className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 font-black dark:bg-slate-800" disabled={busy} onClick={onClose} type="button">×</button>
+        </div>
+
+        <div className="space-y-3">
+          <RequiredField label="שם מוצר">
+            <input className={foodInputClass} onChange={(event) => setField('name', event.target.value)} required value={values.name} />
+          </RequiredField>
+          <RequiredField label="יצרן">
+            <div className="flex gap-2">
+              <input className={foodInputClass} onChange={(event) => setField('manufacturer', event.target.value)} required value={values.manufacturer} />
+              <button className="shrink-0 rounded-xl bg-cyan-100 px-3 text-xs font-black text-cyan-950" onClick={() => setField('manufacturer', DEFAULT_MANUFACTURER)} type="button">רמי לוי</button>
+            </div>
+          </RequiredField>
+          <RequiredField label="קטגוריה">
+            <select className={foodInputClass} onChange={(event) => setField('category', event.target.value)} required value={values.category}>
+              <option value="">בחירת קטגוריה</option>
+              {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </RequiredField>
+          <RequiredField label="כמות ויחידה">
+            <input className={foodInputClass} onChange={(event) => setField('unit_qty', event.target.value)} placeholder="לדוגמה: 500 גרם" required value={values.unit_qty} />
+          </RequiredField>
+          <RequiredField label="קישור לתמונה">
+            <input className={foodInputClass} dir="ltr" onChange={(event) => setField('picture_url', event.target.value)} placeholder="https://..." required type="url" value={values.picture_url} />
+          </RequiredField>
+        </div>
+
+        <button className="mt-5 h-12 w-full rounded-xl bg-rose-600 font-black text-white disabled:opacity-50" disabled={busy || !allFoodFieldsPresent(cleanFoodValues(values))} onClick={onSave} type="button">
+          {busy ? 'שומר...' : 'הוספת מוצר'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const foodInputClass = 'h-12 w-full rounded-xl border border-rose-200 bg-white px-3 text-base outline-none focus:border-rose-600 focus:ring-4 focus:ring-rose-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-rose-900/40'
+
+function RequiredField({ children, label }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-sm font-black text-slate-600 dark:text-slate-300">{label} *</span>
+      {children}
+    </label>
   )
 }
 
@@ -713,6 +798,24 @@ function buildEditValues(food, rating) {
     rating: rating ?? '',
     unit_qty: food?.unit_qty || '',
   }
+}
+
+function emptyFoodValues() {
+  return { category: '', manufacturer: '', name: '', picture_url: '', unit_qty: '' }
+}
+
+function cleanFoodValues(values) {
+  return {
+    category: values.category?.trim() || '',
+    manufacturer: values.manufacturer?.trim() || '',
+    name: values.name?.trim() || '',
+    picture_url: values.picture_url?.trim() || '',
+    unit_qty: values.unit_qty?.trim() || '',
+  }
+}
+
+function allFoodFieldsPresent(values) {
+  return Object.values(values).every(Boolean)
 }
 
 function hasEditChanges(food, values, rating) {

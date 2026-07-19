@@ -2,12 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
 import ShoppingNotes from './ShoppingNotes'
 import TopNotice from './TopNotice'
-import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchRatingsByOwner, fetchShoppingListItems } from '../lib/foodData'
+import { DEFAULT_MANUFACTURER, applyRelatedRatings, deleteShoppingItem, fetchRatingsByOwner, fetchShoppingListItems, setShoppingItemQuantity } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupRowsByRank } from '../lib/foodFilters'
-import { supabase } from '../lib/supabase'
-import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
-
-const realtimeTables = ['shopping_list', 'ratings']
 
 export default function MyRequestsPage({ session }) {
   const [items, setItems] = useState([])
@@ -23,8 +19,8 @@ export default function MyRequestsPage({ session }) {
     setError('')
 
     const [itemsResult, ratingsResult] = await Promise.all([
-      fetchShoppingListItems(session.user_id),
-      fetchRatingsByOwner(session.user_id),
+      fetchShoppingListItems(session),
+      fetchRatingsByOwner(session),
     ])
 
     if (itemsResult.error) {
@@ -39,14 +35,16 @@ export default function MyRequestsPage({ session }) {
       setRatings(applyRelatedRatings(foods, ratingsResult.data, ratingsResult.rows))
     }
     setLoading(false)
-  }, [session.user_id])
+  }, [session])
 
   useEffect(() => {
     const timeoutId = setTimeout(loadItems, 0)
-    return () => clearTimeout(timeoutId)
+    const intervalId = setInterval(loadItems, 15_000)
+    return () => {
+      clearTimeout(timeoutId)
+      clearInterval(intervalId)
+    }
   }, [loadItems])
-
-  useRealtimeRefresh(`my-shopping-list-${session.user_id}`, realtimeTables, loadItems)
 
   const categoryOptions = useMemo(() => buildCategoryOptions(items.map((item) => item.food).filter(Boolean)), [items])
   const filteredItems = useMemo(() => filterFoodRows(items, { category, search }), [category, items, search])
@@ -58,10 +56,9 @@ export default function MyRequestsPage({ session }) {
     setError('')
 
     const nextQuantity = item.quantity + delta
-    const result =
-      nextQuantity <= 0
-        ? await supabase.from('shopping_list').delete().eq('id', item.id)
-        : await supabase.from('shopping_list').update({ quantity: nextQuantity }).eq('id', item.id)
+    const result = nextQuantity <= 0
+      ? await deleteShoppingItem(session, item.id)
+      : await setShoppingItemQuantity(session, item.id, nextQuantity)
 
     setSavingId(null)
 
@@ -77,7 +74,7 @@ export default function MyRequestsPage({ session }) {
     setSavingId(item.id)
     setError('')
 
-    const { error: deleteError } = await supabase.from('shopping_list').delete().eq('id', item.id)
+    const { error: deleteError } = await deleteShoppingItem(session, item.id)
     setSavingId(null)
 
     if (deleteError) {
@@ -97,7 +94,7 @@ export default function MyRequestsPage({ session }) {
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">פריטים שממתינים לקונה ופריטים שכבר נכנסו לעגלה.</p>
       </div>
 
-      <ShoppingNotes ownerId={session.user_id} session={session} />
+      <ShoppingNotes session={session} />
 
       <FoodFilterBar
         category={category}

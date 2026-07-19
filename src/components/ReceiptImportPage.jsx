@@ -16,7 +16,7 @@ export default function ReceiptImportPage({ session }) {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const ownerId = session.role === 'shopper' ? session.shops_for_user_id : session.user_id
+  const canImport = session.member_role === 'manager' || session.is_admin
   const scanReceiptUrl = useCallback(async (value) => {
     setLoading(true)
     setError('')
@@ -55,15 +55,15 @@ export default function ReceiptImportPage({ session }) {
   const closeQrScanner = useCallback(() => setQrOpen(false), [])
 
   async function importReceipt() {
-    if (!ownerId || items.length === 0) return
+    if (!canImport || items.length === 0) return
 
     setSaving(true)
     setError('')
     setSuccess('')
 
     try {
-      const itemFoods = await ensureFoods(items)
-      const { newInventoryCount } = await addInventoryQuantities(ownerId, itemFoods)
+      const itemFoods = await ensureFoods(items, session)
+      const { newInventoryCount } = await addInventoryQuantities(session, itemFoods)
       setSuccess(`נוספו ${newInventoryCount} מוצרים חדשים למלאי הבית.`)
       setItems([])
       setReceiptUrl('')
@@ -285,7 +285,7 @@ function ReceiptItem({ item }) {
   )
 }
 
-async function ensureFoods(items) {
+async function ensureFoods(items, session) {
   const externalIds = items.map((item) => item.external_id).filter(Boolean)
   const names = items.map((item) => item.name)
   const matchedFoodIds = unique(items.map((item) => item.matched_food_id).filter(Boolean))
@@ -313,67 +313,31 @@ async function ensureFoods(items) {
     foodByKey.set(food.name, food)
   }
 
-  const missing = items
-    .filter((item) => !findFoodForItem(foodByKey, item))
-    .map(buildFoodInsert)
+  const missingItems = items.filter((item) => !findFoodForItem(foodByKey, item))
 
-  if (missing.length > 0) {
-    const { data, error } = await supabase
-      .from('foods')
-      .insert(missing)
-      .select('id, external_id, name, manufacturer, unit_qty, picture_url')
-    if (error) throw error
-    for (const food of data || []) {
+  if (missingItems.length > 0) {
+    for (const item of missingItems) {
+      const insert = buildFoodInsert(item)
+      const { data: food, error } = await supabase.rpc('add_receipt_catalog_food', {
+        p_session_token: session.token,
+        p_external_id: insert.external_id || item.external_id || item.barcode || null,
+        p_name: insert.name || item.name,
+        p_manufacturer: insert.manufacturer || item.manufacturer || DEFAULT_MANUFACTURER,
+        p_category: getFoodCategory({ ...item, ...insert }),
+        p_unit_qty: insert.unit_qty || item.unit_qty || 'יחידה',
+        p_picture_url: insert.picture_url || item.picture_url || null,
+      })
+      if (error) throw error
       foodByKey.set(`id:${food.id}`, food)
       if (food.external_id) foodByKey.set(food.external_id, food)
       foodByKey.set(food.name, food)
     }
   }
 
-  await syncExistingFoodMetadata(items, foodByKey)
-
   return items.map((item) => ({
     item,
     food: findFoodForItem(foodByKey, item),
   }))
-}
-
-async function syncExistingFoodMetadata(items, foodByKey) {
-  await Promise.all(
-    items.map(async (item) => {
-      const food = findFoodForItem(foodByKey, item)
-      if (!food) return
-
-      const payload = changedFoodMetadata(food, item)
-      if (Object.keys(payload).length === 0) return
-
-      let result = await supabase
-        .from('foods')
-        .update(payload)
-        .eq('id', food.id)
-        .select('id, external_id, name, manufacturer, unit_qty, picture_url')
-        .maybeSingle()
-
-      if (result.error && payload.name) {
-        const fallbackPayload = { ...payload }
-        delete fallbackPayload.name
-        if (Object.keys(fallbackPayload).length > 0) {
-          result = await supabase
-            .from('foods')
-            .update(fallbackPayload)
-            .eq('id', food.id)
-            .select('id, external_id, name, manufacturer, unit_qty, picture_url')
-            .maybeSingle()
-        }
-      }
-
-      if (!result.error && result.data) {
-        foodByKey.set(`id:${result.data.id}`, result.data)
-        if (result.data.external_id) foodByKey.set(result.data.external_id, result.data)
-        foodByKey.set(result.data.name, result.data)
-      }
-    })
-  )
 }
 
 function findFoodForItem(foodByKey, item) {
@@ -382,15 +346,6 @@ function findFoodForItem(foodByKey, item) {
     foodByKey.get(item.external_id) ||
     foodByKey.get(item.name)
   )
-}
-
-function changedFoodMetadata(food, item) {
-  const payload = {}
-  if (item.name && item.name !== food.name) payload.name = item.name
-  if (item.manufacturer && item.manufacturer !== food.manufacturer) payload.manufacturer = item.manufacturer
-  if (item.unit_qty && item.unit_qty !== food.unit_qty) payload.unit_qty = item.unit_qty
-  if (item.picture_url && item.picture_url !== food.picture_url) payload.picture_url = item.picture_url
-  return payload
 }
 
 async function enrichReceiptItems(items) {

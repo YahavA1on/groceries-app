@@ -1,30 +1,30 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-function privateNotesKey(ownerId, userId) {
-  return `shopping_notes_private:${ownerId}:${userId}`
+function privateNotesKey(familyId, userId) {
+  return `shopping_notes_private:${familyId}:${userId}`
 }
 
-function readPrivateNotes(ownerId, userId) {
+function readPrivateNotes(familyId, userId) {
   try {
-    return JSON.parse(localStorage.getItem(privateNotesKey(ownerId, userId)) || '[]')
+    return JSON.parse(localStorage.getItem(privateNotesKey(familyId, userId)) || '[]')
   } catch {
     return []
   }
 }
 
-export default function ShoppingNotes({ ownerId, session }) {
+export default function ShoppingNotes({ session }) {
+  const familyId = session.family_id
   const [sharedNotes, setSharedNotes] = useState([])
-  const [privateNotes, setPrivateNotes] = useState(() => readPrivateNotes(ownerId, session.user_id))
+  const [privateNotes, setPrivateNotes] = useState(() => readPrivateNotes(familyId, session.user_id))
   const [draft, setDraft] = useState('')
   const [choosingVisibility, setChoosingVisibility] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   const loadSharedNotes = useCallback(async () => {
-    const { data, error: notesError } = await supabase.rpc('list_shopping_notes', {
+    const { data, error: notesError } = await supabase.rpc('list_family_notes', {
       p_session_token: session.token,
-      p_owner_id: ownerId,
     })
 
     if (notesError) {
@@ -34,7 +34,7 @@ export default function ShoppingNotes({ ownerId, session }) {
 
     setError('')
     setSharedNotes(data || [])
-  }, [ownerId, session.token])
+  }, [session.token])
 
   useEffect(() => {
     const timeoutId = setTimeout(loadSharedNotes, 0)
@@ -57,7 +57,7 @@ export default function ShoppingNotes({ ownerId, session }) {
       created_at: new Date().toISOString(),
     }
     const nextNotes = [note, ...privateNotes]
-    localStorage.setItem(privateNotesKey(ownerId, session.user_id), JSON.stringify(nextNotes))
+    localStorage.setItem(privateNotesKey(familyId, session.user_id), JSON.stringify(nextNotes))
     setPrivateNotes(nextNotes)
     setDraft('')
     setChoosingVisibility(false)
@@ -69,9 +69,8 @@ export default function ShoppingNotes({ ownerId, session }) {
 
     setBusy(true)
     setError('')
-    const { error: insertError } = await supabase.rpc('add_shopping_note', {
+    const { error: insertError } = await supabase.rpc('add_family_note', {
       p_session_token: session.token,
-      p_owner_id: ownerId,
       p_body: body,
     })
     setBusy(false)
@@ -88,7 +87,7 @@ export default function ShoppingNotes({ ownerId, session }) {
 
   async function deleteShared(note) {
     setBusy(true)
-    const { error: deleteError } = await supabase.rpc('delete_shopping_note', {
+    const { error: deleteError } = await supabase.rpc('delete_family_note', {
       p_session_token: session.token,
       p_note_id: note.id,
     })
@@ -103,7 +102,7 @@ export default function ShoppingNotes({ ownerId, session }) {
 
   function deletePrivate(note) {
     const nextNotes = privateNotes.filter((entry) => entry.id !== note.id)
-    localStorage.setItem(privateNotesKey(ownerId, session.user_id), JSON.stringify(nextNotes))
+    localStorage.setItem(privateNotesKey(familyId, session.user_id), JSON.stringify(nextNotes))
     setPrivateNotes(nextNotes)
   }
 

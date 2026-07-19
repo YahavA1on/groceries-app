@@ -2,12 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
 import ShoppingNotes from './ShoppingNotes'
 import TopNotice from './TopNotice'
-import { DEFAULT_MANUFACTURER, addInventoryQuantities, applyRelatedRatings, fetchInventoryQuantities, fetchRatingsByOwner, fetchShoppingListItems } from '../lib/foodData'
+import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchRatingsByOwner, fetchShoppingListItems, finishFamilyShopping, setShoppingItemCart } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRatingMood } from '../lib/foodFilters'
-import { supabase } from '../lib/supabase'
-import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
-
-const realtimeTables = ['shopping_list', 'ratings']
 
 export default function FulfillmentPage({ session }) {
   const [items, setItems] = useState([])
@@ -21,16 +17,15 @@ export default function FulfillmentPage({ session }) {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const ownerId = session.role === 'shopper' ? session.shops_for_user_id : session.user_id
+  const familyId = session.family_id
 
   const loadItems = useCallback(async () => {
     setLoading(true)
     setError('')
 
-    const [listRes, ownerRes, ratingsRes] = await Promise.all([
-      fetchShoppingListItems(ownerId),
-      supabase.from('users').select('username').eq('id', ownerId).maybeSingle(),
-      fetchRatingsByOwner(ownerId),
+    const [listRes, ratingsRes] = await Promise.all([
+      fetchShoppingListItems(session),
+      fetchRatingsByOwner(session),
     ])
 
     if (listRes.error) {
@@ -40,20 +35,22 @@ export default function FulfillmentPage({ session }) {
       setItems(listRes.data || [])
     }
 
-    if (!ownerRes.error) setOwnerName(ownerRes.data?.username || '')
+    setOwnerName(session.family_name || '')
     if (!ratingsRes.error) {
       const foods = (listRes.data || []).map((item) => item.food).filter(Boolean)
       setRatings(applyRelatedRatings(foods, ratingsRes.data, ratingsRes.rows))
     }
     setLoading(false)
-  }, [ownerId])
+  }, [session])
 
   useEffect(() => {
     const timeoutId = setTimeout(loadItems, 0)
-    return () => clearTimeout(timeoutId)
+    const intervalId = setInterval(loadItems, 15_000)
+    return () => {
+      clearTimeout(timeoutId)
+      clearInterval(intervalId)
+    }
   }, [loadItems])
-
-  useRealtimeRefresh(`fulfillment-legacy-${ownerId}`, realtimeTables, loadItems)
 
   const categoryOptions = useMemo(() => buildCategoryOptions(items.map((item) => item.food).filter(Boolean)), [items])
   const filteredItems = useMemo(() => filterFoodRows(items, { category, search }), [category, items, search])
@@ -68,7 +65,7 @@ export default function FulfillmentPage({ session }) {
     const previousItems = items
     setItems((current) => current.map((entry) => (entry.id === item.id ? { ...entry, in_cart: inCart } : entry)))
 
-    const { error: updateError } = await supabase.from('shopping_list').update({ in_cart: inCart }).eq('id', item.id)
+    const { error: updateError } = await setShoppingItemCart(session, item.id, inCart)
     setSavingId(null)
 
     if (updateError) {
@@ -87,19 +84,7 @@ export default function FulfillmentPage({ session }) {
     setError('')
     setSuccess('')
 
-    const purchasedAt = new Date().toISOString()
-    const cartSnapshot = allCartItems
-    let inventoryBefore
-
-    try {
-      inventoryBefore = await fetchInventoryQuantities(ownerId, cartSnapshot.map((item) => item.food_id))
-    } catch {
-      inventoryBefore = new Map()
-    }
-
-    const { data, error: rpcError } = await supabase.rpc('finish_shopping', {
-      p_shopper_id: session.role === 'shopper' ? session.user_id : ownerId,
-    })
+    const { data, error: rpcError } = await finishFamilyShopping(session)
     setFinishing(false)
 
     if (rpcError) {
@@ -107,23 +92,15 @@ export default function FulfillmentPage({ session }) {
       return
     }
 
-    try {
-      await addMissingInventoryQuantities(ownerId, cartSnapshot, inventoryBefore, purchasedAt)
-    } catch (inventoryError) {
-      setError(inventoryError.message)
-      await loadItems()
-      return
-    }
-
     setSuccess(`הקניות הסתיימו. עודכנו ${data ?? allCartItems.length} פריטים.`)
     await loadItems()
   }
 
-  if (!ownerId) {
+  if (!familyId) {
     return (
       <section className="rounded-2xl bg-white p-6 text-center shadow-sm dark:bg-slate-900">
-        <h2 className="text-2xl font-black">לא משויך בעלים</h2>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">למשתמש הקונה לא מוגדר `shops_for_user_id`.</p>
+        <h2 className="text-2xl font-black">אין שיוך למשפחה</h2>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">יש להצטרף למשפחה כדי להתחיל קנייה.</p>
       </section>
     )
   }
@@ -143,7 +120,7 @@ export default function FulfillmentPage({ session }) {
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">העבירו פריטים לעגלה ואז סיימו את הקניה.</p>
       </div>
 
-      <ShoppingNotes ownerId={ownerId} session={session} />
+      <ShoppingNotes session={session} />
 
       <FoodFilterBar
         category={category}
@@ -196,26 +173,6 @@ export default function FulfillmentPage({ session }) {
       ) : null}
     </section>
   )
-}
-
-async function addMissingInventoryQuantities(ownerId, cartItems, inventoryBefore, purchasedAt) {
-  const inventoryAfter = await fetchInventoryQuantities(ownerId, cartItems.map((item) => item.food_id))
-  const missing = []
-
-  for (const item of cartItems) {
-    const beforeQuantity = inventoryBefore.get(item.food_id) || 0
-    const afterQuantity = inventoryAfter.get(item.food_id) || 0
-    const missingQuantity = Math.max(0, beforeQuantity + Number(item.quantity || 0) - afterQuantity)
-
-    if (missingQuantity > 0) {
-      missing.push({
-        item: { quantity: missingQuantity },
-        food: { id: item.food_id },
-      })
-    }
-  }
-
-  if (missing.length > 0) await addInventoryQuantities(ownerId, missing, purchasedAt)
 }
 
 function ItemSection({ actionLabel = 'הוספה', emptyText, inCart = false, items, onAction, pinned = false, ratings, savingId, title }) {
