@@ -1,3 +1,5 @@
+import { isRateableFood } from './productRules.js'
+
 export const ALL_CATEGORIES = 'all'
 export const OTHER_CATEGORY = 'אחר'
 
@@ -56,6 +58,8 @@ const categoryDefinitions = [
       'פלפל חריף',
       'אבוקדו',
       'תפוח עץ',
+      'תפוח אדום',
+      'תפוח ירוק',
       'לימון',
       'תפוז',
       'בזיליקום',
@@ -341,6 +345,16 @@ const RATING_UNDERLINES = {
   1: 'border-red-600',
 }
 
+const NOT_RATEABLE_GROUP = {
+  key: 'not-rateable',
+  value: null,
+  title: 'מרכיבי בישול – ללא דירוג',
+  tone: 'text-sky-700 dark:text-sky-300',
+  ring: 'ring-sky-200 dark:ring-sky-500/30',
+  badge: 'bg-sky-100 text-sky-900 dark:bg-sky-500/20 dark:text-sky-100',
+  underline: 'border-sky-400 dark:border-sky-600',
+}
+
 export const RANKS = [
   ...[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((value) => ({
     key: `rank-${value}`,
@@ -573,12 +587,14 @@ function getForcedCategory(haystack) {
 }
 
 function groupItemsByRank(items, ratings, getFood) {
-  const groups = RANKS.map((rank) => ({ ...rank, items: [], foods: [] }))
+  const groups = [...RANKS, NOT_RATEABLE_GROUP].map((rank) => ({ ...rank, items: [], foods: [] }))
 
   for (const item of items) {
     const food = getFood(item)
-    const rating = normalizeRating(ratings?.[food?.id])
-    const group = groups.find((entry) => entry.value === rating) || groups[groups.length - 1]
+    const rating = isRateableFood(food) ? normalizeRating(ratings?.[food?.id]) : null
+    const group = isRateableFood(food)
+      ? groups.find((entry) => entry.key !== NOT_RATEABLE_GROUP.key && entry.value === rating)
+      : groups.find((entry) => entry.key === NOT_RATEABLE_GROUP.key)
     group.items.push(item)
     group.foods.push(item)
   }
@@ -587,11 +603,13 @@ function groupItemsByRank(items, ratings, getFood) {
 }
 
 function groupItemsByRatingMood(items, ratings, getFood) {
-  const groups = SHOPPER_RATING_GROUPS.map((group) => ({ ...group, items: [], foods: [] }))
+  const groups = [...SHOPPER_RATING_GROUPS, NOT_RATEABLE_GROUP].map((group) => ({ ...group, items: [], foods: [] }))
 
   for (const item of items) {
     const food = getFood(item)
-    const group = groups.find((entry) => entry.key === shopperMoodKey(ratings?.[food?.id]))
+    const group = isRateableFood(food)
+      ? groups.find((entry) => entry.key === shopperMoodKey(ratings?.[food?.id]))
+      : groups.find((entry) => entry.key === NOT_RATEABLE_GROUP.key)
     group.items.push(item)
     group.foods.push(item)
   }

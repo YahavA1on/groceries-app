@@ -4,6 +4,7 @@ import TopNotice from './TopNotice'
 import { useCart } from '../hooks/useCart'
 import { DEFAULT_MANUFACTURER, addInventoryQuantities, applyRelatedRatings, fetchFoodsWithOptionalCategory, fetchRatingsByOwner } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, getFoodCategory, groupFoodsByRank, groupFoodsByRatingMood, groupItemsByCategory, matchesFoodFilters, rankMetaForRating, ratingColorClass, visibleUniqueFoods } from '../lib/foodFilters'
+import { isRateableFood } from '../lib/productRules'
 import { supabase } from '../lib/supabase'
 
 export default function CatalogPage({ onSubmitted, session }) {
@@ -150,6 +151,7 @@ export default function CatalogPage({ onSubmitted, session }) {
   }
 
   async function saveRating(foodId, rating) {
+    if (!isRateableFood(foodById.get(foodId))) return false
     setRatingFoodId(foodId)
     setError('')
 
@@ -238,7 +240,7 @@ export default function CatalogPage({ onSubmitted, session }) {
       return
     }
 
-    if (editingValues.rating === '') {
+    if (!isRateableFood({ ...editingFood, ...payload }) || editingValues.rating === '') {
       const { error: deleteRatingError } = await supabase
         .from('ratings')
         .delete()
@@ -409,10 +411,10 @@ export default function CatalogPage({ onSubmitted, session }) {
                       onDecrement={() => changeQuantity(food.id, -1)}
                       onEdit={canManageItems ? () => openEditor(food) : null}
                       onIncrement={() => changeQuantity(food.id, 1)}
-                      onRate={canManageItems ? (rating) => saveRating(food.id, rating) : null}
+                      onRate={canManageItems && isRateableFood(food) ? (rating) => saveRating(food.id, rating) : null}
                       quantity={items[food.id]?.quantity || 0}
                       rating={ratings[food.id]}
-                      ratingGroup={canManageItems ? null : group}
+                      ratingGroup={!canManageItems || group.key === 'not-rateable' ? group : null}
                       ratingBusy={ratingFoodId === food.id}
                     />
                   ))}
@@ -539,6 +541,7 @@ function FoodRow({ food, onAdd, onDecrement, onEdit, onIncrement, onRate, quanti
 
 function EditFoodSheet({ busy, categoryOptions, food, onDelete, onRequestClose, onSave, onValuesChange, values }) {
   const options = ensureCategoryOption(categoryOptions, values.category)
+  const rateable = isRateableFood({ ...food, ...values })
 
   function setField(field, value) {
     onValuesChange((current) => ({ ...current, [field]: value }))
@@ -615,7 +618,7 @@ function EditFoodSheet({ busy, categoryOptions, food, onDelete, onRequestClose, 
             />
           </label>
 
-          <div>
+          {rateable ? <div>
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="text-sm font-black text-slate-600 dark:text-slate-300">דירוג</span>
               <button
@@ -638,7 +641,11 @@ function EditFoodSheet({ busy, categoryOptions, food, onDelete, onRequestClose, 
                 </button>
               ))}
             </div>
-          </div>
+          </div> : (
+            <div className="rounded-xl bg-sky-50 p-3 text-sm font-black text-sky-800 dark:bg-sky-500/10 dark:text-sky-200">
+              מרכיב בישול – ללא דירוג
+            </div>
+          )}
         </div>
 
         <div className="mt-5 grid grid-cols-[1fr_auto] gap-2">
