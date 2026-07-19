@@ -280,10 +280,11 @@ function changedFoodMetadata(food, item) {
 }
 
 async function enrichReceiptItems(items) {
+  const filteredItems = items.filter((item) => !isWaterProduct(item))
   const { foodByKey, foods } = await loadMatchingFoods()
-  const catalogByKey = await loadCatalogMatches(items, foodByKey)
+  const catalogByKey = await loadCatalogMatches(filteredItems, foodByKey)
 
-  const enrichedItems = items.map((item) => {
+  const enrichedItems = filteredItems.map((item) => {
     const matchedFood = foodByKey.get(item.external_id) || foodByKey.get(item.barcode) || foodByKey.get(item.name)
     const matchedCatalog = catalogByKey.get(item.external_id) || catalogByKey.get(item.barcode) || catalogByKey.get(item.name)
     const withSavedFood = matchedFood
@@ -299,7 +300,7 @@ async function enrichReceiptItems(items) {
   const normalizedItems = await applyAiNormalization(enrichedItems)
   return mergeDuplicateReceiptItems(
     normalizedItems
-      .filter((item) => !isNonFoodProduct(item))
+      .filter((item) => !isNonFoodProduct(item) && !isWaterProduct(item))
       .map(normalizeReceiptPresentation)
       .map(withReliableReceiptImage)
   )
@@ -640,7 +641,7 @@ function mergeDuplicateReceiptItems(items) {
       for (const alias of aliases) byAlias.set(alias, copy)
       continue
     }
-    existing.quantity = Number(existing.quantity || 0) + Number(item.quantity || 0)
+    existing.quantity = Math.max(Number(existing.quantity || 0), Number(item.quantity || 0))
     existing.image_candidates = unique([...(existing.image_candidates || []), ...(item.image_candidates || [])])
     for (const alias of aliases) byAlias.set(alias, existing)
   }
@@ -666,6 +667,16 @@ function normalizeIdentity(value) {
   return String(value)
     .toLocaleLowerCase('he')
     .replace(/[^\p{L}\p{N}%]+/gu, '')
+}
+
+function isWaterProduct(item) {
+  const text = [item?.name, item?.manufacturer]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return /(?:^|\s)מים(?:\s|$)|מי עדן|נביעות|עין גדי|אקווה נובה/u.test(text)
 }
 
 function splitReceiptName(value) {
