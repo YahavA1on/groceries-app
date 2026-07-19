@@ -35,26 +35,43 @@ try {
   } else {
     (Get-Command cloudflared.exe -ErrorAction Stop).Source
   }
-  $tunnel = Start-Process -FilePath $cloudflared `
-    -ArgumentList @('tunnel', '--url', 'http://127.0.0.1:8787', '--no-autoupdate') `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $tunnelOut `
-    -RedirectStandardError $tunnelErr `
-    -PassThru
-
   $tunnelUrl = ''
   $tunnelReady = $false
-  for ($attempt = 0; $attempt -lt 40 -and !$tunnelReady; $attempt += 1) {
-    Start-Sleep -Milliseconds 500
-    if ($tunnel.HasExited) {
-      throw "Receipt tunnel stopped: $(Get-Content $tunnelErr -Raw -ErrorAction SilentlyContinue)"
+  $lastTunnelError = ''
+  for ($tunnelAttempt = 1; $tunnelAttempt -le 5 -and !$tunnelReady; $tunnelAttempt += 1) {
+    Remove-Item $tunnelOut,$tunnelErr -ErrorAction SilentlyContinue
+    $tunnel = Start-Process -FilePath $cloudflared `
+      -ArgumentList @('tunnel', '--url', 'http://127.0.0.1:8787', '--no-autoupdate') `
+      -WindowStyle Hidden `
+      -RedirectStandardOutput $tunnelOut `
+      -RedirectStandardError $tunnelErr `
+      -PassThru
+
+    for ($pollAttempt = 0; $pollAttempt -lt 40 -and !$tunnelReady; $pollAttempt += 1) {
+      Start-Sleep -Milliseconds 500
+      $output = (Get-Content $tunnelOut -Raw -ErrorAction SilentlyContinue) + "`n" +
+        (Get-Content $tunnelErr -Raw -ErrorAction SilentlyContinue)
+      $tunnelUrl = [regex]::Match($output, 'https://[a-zA-Z0-9-]+\.trycloudflare\.com').Value
+      $tunnelReady = $tunnelUrl -and $output.Contains('Registered tunnel connection')
+      if ($tunnel.HasExited) {
+        $lastTunnelError = (Get-Content $tunnelErr -Raw -ErrorAction SilentlyContinue).Trim()
+        break
+      }
     }
-    $output = (Get-Content $tunnelOut -Raw -ErrorAction SilentlyContinue) + "`n" +
-      (Get-Content $tunnelErr -Raw -ErrorAction SilentlyContinue)
-    $tunnelUrl = [regex]::Match($output, 'https://[a-zA-Z0-9-]+\.trycloudflare\.com').Value
-    $tunnelReady = $tunnelUrl -and $output.Contains('Registered tunnel connection')
+
+    if (!$tunnelReady) {
+      if ($tunnel -and !$tunnel.HasExited) { Stop-Process -Id $tunnel.Id -Force }
+      if (!$lastTunnelError) { $lastTunnelError = 'Tunnel registration timed out.' }
+      if ($tunnelAttempt -lt 5) {
+        $delay = [math]::Min(16, [math]::Pow(2, $tunnelAttempt))
+        Write-Warning "Tunnel attempt $tunnelAttempt failed. Retrying in $delay seconds."
+        Start-Sleep -Seconds $delay
+      }
+    }
   }
-  if (!$tunnelReady) { throw 'Receipt tunnel did not establish a registered HTTPS connection.' }
+  if (!$tunnelReady) {
+    throw "Receipt tunnel failed after 5 attempts: $lastTunnelError"
+  }
 
   & npx.cmd supabase secrets set `
     "RECEIPT_BRIDGE_URL=$tunnelUrl" `
