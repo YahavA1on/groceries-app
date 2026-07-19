@@ -11,6 +11,7 @@
     "receipt-bridge": "node scripts/receiptBridge.js",
     "receipt-bridge:public": "powershell -ExecutionPolicy Bypass -File scripts/startReceiptBridge.ps1",
     "probe-rami-levy": "node scripts/ramiLevyCatalogProbe.js",
+    "cleanup-foods": "node scripts/cleanupFoodCatalog.js",
     "update-foods": "node scripts/ramiLevyCatalogProbe.js --upsert"
   },
   "dependencies": {
