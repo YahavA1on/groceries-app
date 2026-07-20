@@ -3,7 +3,7 @@ import { changePassword, updateProfile } from '../lib/auth'
 
 const FAMILY_PREFIX = 'הבית של משפחת '
 
-export default function ProfileSheet({ onClose, onLogout, onSessionChange, session }) {
+export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionChange, session }) {
   const canRenameFamily = session.member_role === 'manager' || session.is_admin
   const initialSurname = session.family_name?.startsWith(FAMILY_PREFIX)
     ? session.family_name.slice(FAMILY_PREFIX.length)
@@ -70,10 +70,19 @@ export default function ProfileSheet({ onClose, onLogout, onSessionChange, sessi
             <input className={inputClass} maxLength="40" onChange={(event) => setUsername(event.target.value)} value={username} />
           </Field>
           {canRenameFamily ? (
-            <Field label="שם המשפחה">
-              <input className={inputClass} maxLength="60" onChange={(event) => setFamilySurname(event.target.value)} placeholder="לדוגמה: אלון" value={familySurname} />
-              <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">יוצג כ״הבית של משפחת {familySurname || '...'}״ לכל בני הבית.</span>
-            </Field>
+            <>
+              <Field label="שם המשפחה">
+                <input className={inputClass} maxLength="60" onChange={(event) => setFamilySurname(event.target.value)} placeholder="לדוגמה: אלון" value={familySurname} />
+                <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">יוצג כ״הבית של משפחת {familySurname || '...'}״ לכל בני הבית.</span>
+              </Field>
+              {familyCode ? (
+                <div className="rounded-xl bg-cyan-50 p-3 dark:bg-cyan-400/10">
+                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400">קוד המשפחה</p>
+                  <p className="mt-1 select-all font-mono text-xl font-black text-cyan-900 dark:text-cyan-200" dir="ltr">{familyCode}</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">שתפו אותו רק עם קונה שצריך להצטרף לבית.</p>
+                </div>
+              ) : null}
+            </>
           ) : null}
           <Message text={profileMessage} />
           <button className={primaryButton} disabled={profileBusy || username.trim().length < 2} type="submit">{profileBusy ? 'שומר...' : 'שמירת פרטים'}</button>

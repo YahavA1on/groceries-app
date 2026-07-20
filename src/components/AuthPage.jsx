@@ -43,7 +43,7 @@ export default function AuthPage({ existingSession = null, onLogin }) {
   const valid = username.trim()
     && password.length >= (isRegister || isSetup ? 8 : 1)
     && (!isRegister && !isSetup || (email.trim() && confirmPassword.length >= 8))
-    && (!isRegister || (role === 'owner' ? familyName.trim() : inviteCode.trim()))
+    && (!isRegister || (/^[A-Z0-9]{4,12}$/.test(inviteCode) && (role !== 'owner' || familyName.trim())))
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-slate-950 px-4 py-8 text-white">
@@ -118,13 +118,14 @@ export default function AuthPage({ existingSession = null, onLogin }) {
               </fieldset>
 
               {role === 'owner' ? (
-                <Field label="שם המשפחה">
-                  <input className={inputClass} onChange={(event) => setFamilyName(event.target.value)} placeholder="לדוגמה: אלון" value={familyName} />
-                </Field>
+                <>
+                  <Field label="שם המשפחה">
+                    <input className={inputClass} onChange={(event) => setFamilyName(event.target.value)} placeholder="לדוגמה: אלון" value={familyName} />
+                  </Field>
+                  <FamilyCodeField inviteCode={inviteCode} label="בחרו קוד משפחה" setInviteCode={setInviteCode} />
+                </>
               ) : (
-                <Field label="קוד משפחה">
-                  <input className={`${inputClass} uppercase`} dir="ltr" maxLength="8" onChange={(event) => setInviteCode(event.target.value.toUpperCase())} placeholder="XXXXXXXX" value={inviteCode} />
-                </Field>
+                <FamilyCodeField inviteCode={inviteCode} setInviteCode={setInviteCode} />
               )}
             </>
           ) : null}
@@ -171,5 +172,13 @@ function RoleButton({ active, label, onClick }) {
     <button className={`h-12 rounded-xl font-black ${active ? 'bg-rose-600 text-white' : 'bg-slate-100 text-slate-600'}`} onClick={onClick} type="button">
       {label}
     </button>
+  )
+}
+
+function FamilyCodeField({ inviteCode, label = 'קוד משפחה', setInviteCode }) {
+  return (
+    <Field label={label}>
+      <input className={`${inputClass} uppercase`} dir="ltr" maxLength="12" onChange={(event) => setInviteCode(event.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase())} placeholder="1234" value={inviteCode} />
+    </Field>
   )
 }

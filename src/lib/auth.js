@@ -13,6 +13,8 @@ const errorMessages = {
   INVALID_CURRENT_PASSWORD: 'הסיסמה הנוכחית שגויה.',
   INVALID_EMAIL: 'כתובת האימייל אינה תקינה.',
   INVALID_INVITE: 'קוד המשפחה אינו תקין.',
+  INVALID_FAMILY_CODE: 'קוד המשפחה חייב להכיל 4 עד 12 אותיות באנגלית או ספרות.',
+  INVITE_TAKEN: 'קוד המשפחה כבר בשימוש. בחרו קוד אחר.',
   INVALID_ROLE: 'יש לבחור סוג משתמש.',
   INVALID_FAMILY_SURNAME: 'יש להזין שם משפחה תקין.',
   INVALID_USERNAME: 'שם המשתמש חייב להכיל 2 עד 40 תווים.',
@@ -36,7 +38,7 @@ export async function register({ email, familyName, inviteCode, password, role, 
     p_password: password,
     p_role: role,
     p_family_name: role === 'owner' ? `הבית של משפחת ${familyName.trim()}` : null,
-    p_invite_code: role === 'shopper' ? inviteCode.trim() : null,
+    p_invite_code: inviteCode.trim(),
   })
   return handleAuthResult(data, error)
 }

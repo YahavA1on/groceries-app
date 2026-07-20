@@ -121,7 +121,6 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
               <h1 className="truncate text-xl font-black">שלום {session.username}</h1>
               <p className="truncate text-xs font-bold text-slate-500 dark:text-slate-400">
                 {familyDetails?.name || session.family_name}
-                {familyDetails?.invite_code ? ` · קוד ${familyDetails.invite_code}` : ''}
               </p>
             </div>
           </div>
@@ -184,6 +183,7 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
       {profileOpen ? (
         <ProfileSheet
           onClose={() => setProfileOpen(false)}
+          familyCode={familyDetails?.invite_code}
           onLogout={onLogout}
           onSessionChange={onSessionChange}
           session={session}
