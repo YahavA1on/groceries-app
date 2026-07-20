@@ -456,6 +456,48 @@ update public.imported_receipts as receipt_row
  where receipt_row.family_id is null
    and f.legacy_owner_id = (select id from public.users where username = 'יהב' limit 1);
 
+-- Repair legacy rows that were accidentally anchored to a shopper instead of
+-- the household manager. The membership identifies the correct family.
+update public.inventory as inv
+   set family_id = fm.family_id,
+       owner_id = f.created_by
+  from public.family_members fm
+  join public.families f on f.id = fm.family_id
+ where inv.family_id is null
+   and fm.user_id = inv.owner_id;
+
+update public.purchases as purchase_row
+   set family_id = fm.family_id,
+       owner_id = f.created_by
+  from public.family_members fm
+  join public.families f on f.id = fm.family_id
+ where purchase_row.family_id is null
+   and fm.user_id = purchase_row.owner_id;
+
+update public.ratings as rating_row
+   set family_id = fm.family_id,
+       owner_id = f.created_by
+  from public.family_members fm
+  join public.families f on f.id = fm.family_id
+ where rating_row.family_id is null
+   and fm.user_id = rating_row.owner_id;
+
+update public.shopping_list as list_row
+   set family_id = fm.family_id,
+       owner_id = f.created_by
+  from public.family_members fm
+  join public.families f on f.id = fm.family_id
+ where list_row.family_id is null
+   and fm.user_id = list_row.owner_id;
+
+update public.shopping_notes as note_row
+   set family_id = fm.family_id,
+       owner_id = f.created_by
+  from public.family_members fm
+  join public.families f on f.id = fm.family_id
+ where note_row.family_id is null
+   and fm.user_id = note_row.owner_id;
+
 alter table public.inventory alter column family_id set not null;
 alter table public.purchases alter column family_id set not null;
 alter table public.ratings alter column family_id set not null;
