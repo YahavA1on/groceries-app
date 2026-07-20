@@ -5,8 +5,9 @@ import CatalogPage from './components/CatalogPage'
 import FulfillmentPage from './components/FulfillmentPage'
 import InventoryPage from './components/InventoryPage'
 import MyRequestsPage from './components/MyRequestsPage'
+import ProfileSheet from './components/ProfileSheet'
 import ReceiptImportPage from './components/ReceiptImportPage'
-import { getCurrentSession, logout, refreshCurrentSession } from './lib/auth'
+import { getCurrentSession, logout, refreshCurrentSession, saveSession } from './lib/auth'
 import { useCart } from './hooks/useCart'
 import { supabase } from './lib/supabase'
 
@@ -60,6 +61,10 @@ export default function App() {
     setActiveTab(nextSession.role === 'shopper' ? 'fulfillment' : 'catalog')
   }
 
+  function handleSessionChange(nextSession) {
+    setSession(saveSession(nextSession))
+  }
+
   if (checkingSession) return <div className="flex min-h-dvh items-center justify-center bg-slate-950 text-lg font-black text-white">בודק חיבור...</div>
   if (!session || session.needs_password_setup) return <AuthPage existingSession={session?.needs_password_setup ? session : null} onLogin={handleLogin} />
 
@@ -69,6 +74,7 @@ export default function App() {
         activeTab={activeTab}
         darkMode={darkMode}
         onLogout={handleLogout}
+        onSessionChange={handleSessionChange}
         onTabChange={setActiveTab}
         onToggleTheme={() => setDarkMode((value) => !value)}
         session={session}
@@ -77,10 +83,11 @@ export default function App() {
   )
 }
 
-function AppShell({ activeTab, darkMode, onLogout, onTabChange, onToggleTheme, session }) {
+function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange, onToggleTheme, session }) {
   const { count } = useCart()
   const tabs = session.role === 'shopper' ? shopperTabs : ownerTabs
   const [familyDetails, setFamilyDetails] = useState(null)
+  const [profileOpen, setProfileOpen] = useState(false)
 
   useEffect(() => {
     if (!session.family_id) return undefined
@@ -91,7 +98,7 @@ function AppShell({ activeTab, darkMode, onLogout, onTabChange, onToggleTheme, s
     return () => {
       cancelled = true
     }
-  }, [session.family_id, session.token])
+  }, [session.family_id, session.family_name, session.token])
 
   const page = useMemo(() => {
     if (activeTab === 'my') return <MyRequestsPage session={session} />
@@ -139,8 +146,8 @@ function AppShell({ activeTab, darkMode, onLogout, onTabChange, onToggleTheme, s
             >
               {darkMode ? '☀' : '☾'}
             </button>
-            <button className="h-10 rounded-xl bg-rose-100 px-3 text-sm font-bold text-rose-800 dark:bg-rose-500/20 dark:text-rose-100" onClick={onLogout} type="button">
-              יציאה
+            <button aria-label="פרופיל" className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 text-base font-black text-rose-800 dark:bg-rose-500/20 dark:text-rose-100" onClick={() => setProfileOpen(true)} title="פרופיל" type="button">
+              {session.username?.trim()?.[0] || 'א'}
             </button>
           </div>
         </div>
@@ -171,6 +178,15 @@ function AppShell({ activeTab, darkMode, onLogout, onTabChange, onToggleTheme, s
           </div>
         </div>
       </nav>
+
+      {profileOpen ? (
+        <ProfileSheet
+          onClose={() => setProfileOpen(false)}
+          onLogout={onLogout}
+          onSessionChange={onSessionChange}
+          session={session}
+        />
+      ) : null}
     </div>
   )
 }

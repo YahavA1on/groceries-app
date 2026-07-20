@@ -10,12 +10,16 @@ const errorMessages = {
   EMAIL_TAKEN: 'האימייל כבר משויך למשתמש אחר.',
   FAMILY_NAME_REQUIRED: 'יש להזין שם למשפחה.',
   INVALID_CREDENTIALS: 'שם המשתמש או הסיסמה שגויים.',
+  INVALID_CURRENT_PASSWORD: 'הסיסמה הנוכחית שגויה.',
   INVALID_EMAIL: 'כתובת האימייל אינה תקינה.',
   INVALID_INVITE: 'קוד המשפחה אינו תקין.',
   INVALID_ROLE: 'יש לבחור סוג משתמש.',
+  INVALID_SETUP_CODE: 'קוד ההפעלה שגוי או שפג תוקפו.',
+  INVALID_FAMILY_SURNAME: 'יש להזין שם משפחה תקין.',
   INVALID_USERNAME: 'שם המשתמש חייב להכיל 2 עד 40 תווים.',
   SESSION_EXPIRED: 'החיבור פג. יש להתחבר מחדש.',
   USERNAME_TAKEN: 'שם המשתמש כבר קיים.',
+  USER_NOT_FOUND: 'המשתמש לא נמצא.',
   WEAK_PASSWORD: 'הסיסמה חייבת להכיל לפחות 8 תווים.',
 }
 
@@ -33,10 +37,56 @@ export async function register({ email, familyName, inviteCode, password, role, 
     p_email: email.trim(),
     p_password: password,
     p_role: role,
-    p_family_name: role === 'owner' ? familyName.trim() : null,
+    p_family_name: role === 'owner' ? `הבית של משפחת ${familyName.trim()}` : null,
     p_invite_code: role === 'shopper' ? inviteCode.trim() : null,
   })
   return handleAuthResult(data, error)
+}
+
+export async function activateLegacyAccount({ email, password, setupCode, username }) {
+  const { data, error } = await supabase.rpc('activate_legacy_account', {
+    p_username: username.trim(),
+    p_email: email.trim(),
+    p_password: password,
+    p_setup_code: setupCode.trim(),
+  })
+  return handleAuthResult(data, error)
+}
+
+export async function updateProfile(session, username, familySurname = null) {
+  const { data, error } = await supabase.rpc('update_app_profile', {
+    p_session_token: session.token,
+    p_username: username.trim(),
+    p_family_surname: familySurname === null ? null : familySurname.trim(),
+  })
+  return handleAuthResult(data, error)
+}
+
+export async function changePassword(session, currentPassword, newPassword) {
+  const { data, error } = await supabase.rpc('change_app_password', {
+    p_session_token: session.token,
+    p_current_password: currentPassword,
+    p_new_password: newPassword,
+  })
+  if (error) return { error: error.message }
+  if (!data || data.error) return { error: errorMessages[data?.error] || 'לא ניתן לשנות את הסיסמה.' }
+  return { success: true }
+}
+
+export async function createLegacySetupCode(session, username) {
+  const { data, error } = await supabase.rpc('create_legacy_setup_code', {
+    p_session_token: session.token,
+    p_username: username.trim(),
+  })
+  if (error) return { error: error.message }
+  if (!data || data.error) return { error: errorMessages[data?.error] || 'לא ניתן ליצור קוד הפעלה.' }
+  return { activation: data }
+}
+
+export function saveSession(session) {
+  const normalized = normalizeSession(session)
+  if (normalized) localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
+  return normalized
 }
 
 export async function claimLegacyAccount(session, email, password) {
@@ -94,8 +144,7 @@ function handleAuthResult(data, error) {
   if (error) return { error: error.message }
   if (!data || data.error) return { error: errorMessages[data?.error] || 'לא ניתן להשלים את הפעולה.' }
 
-  const session = normalizeSession(data)
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(session))
+  const session = saveSession(data)
   return { session }
 }
 
