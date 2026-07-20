@@ -112,13 +112,18 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
     <div className="min-h-dvh bg-orange-50 pb-28 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
       <header className="sticky top-0 z-30 border-b border-rose-100 bg-orange-50/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
         <div className="mx-auto flex max-w-md items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-black uppercase tracking-wide text-rose-700 dark:text-cyan-300">רשימת קניות</p>
-            <h1 className="truncate text-xl font-black">שלום {session.username}</h1>
-            <p className="truncate text-xs font-bold text-slate-500 dark:text-slate-400">
-              {familyDetails?.name || session.family_name}
-              {familyDetails?.invite_code ? ` · קוד ${familyDetails.invite_code}` : ''}
-            </p>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <button aria-label="פרופיל" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-base font-black text-rose-800 dark:bg-rose-500/20 dark:text-rose-100" onClick={() => setProfileOpen(true)} title="פרופיל" type="button">
+              {session.username?.trim()?.[0] || 'א'}
+            </button>
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-wide text-rose-700 dark:text-cyan-300">רשימת קניות</p>
+              <h1 className="truncate text-xl font-black">שלום {session.username}</h1>
+              <p className="truncate text-xs font-bold text-slate-500 dark:text-slate-400">
+                {familyDetails?.name || session.family_name}
+                {familyDetails?.invite_code ? ` · קוד ${familyDetails.invite_code}` : ''}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {session.member_role === 'manager' || session.is_admin ? <button
@@ -145,9 +150,6 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
               type="button"
             >
               {darkMode ? '☀' : '☾'}
-            </button>
-            <button aria-label="פרופיל" className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 text-base font-black text-rose-800 dark:bg-rose-500/20 dark:text-rose-100" onClick={() => setProfileOpen(true)} title="פרופיל" type="button">
-              {session.username?.trim()?.[0] || 'א'}
             </button>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { changePassword, createLegacySetupCode, updateProfile } from '../lib/auth'
+import { changePassword, updateProfile } from '../lib/auth'
 
 const FAMILY_PREFIX = 'הבית של משפחת '
 
@@ -17,10 +17,6 @@ export default function ProfileSheet({ onClose, onLogout, onSessionChange, sessi
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordBusy, setPasswordBusy] = useState(false)
   const [passwordMessage, setPasswordMessage] = useState('')
-  const [activationUsername, setActivationUsername] = useState('')
-  const [activation, setActivation] = useState(null)
-  const [activationBusy, setActivationBusy] = useState(false)
-  const [activationError, setActivationError] = useState('')
 
   async function saveProfile(event) {
     event.preventDefault()
@@ -57,20 +53,6 @@ export default function ProfileSheet({ onClose, onLogout, onSessionChange, sessi
     setPasswordMessage('הסיסמה שונתה. חיבורים במכשירים אחרים נותקו.')
   }
 
-  async function generateActivationCode(event) {
-    event.preventDefault()
-    setActivation(null)
-    setActivationError('')
-    setActivationBusy(true)
-    const result = await createLegacySetupCode(session, activationUsername)
-    setActivationBusy(false)
-    if (result.error) {
-      setActivationError(result.error)
-      return
-    }
-    setActivation(result.activation)
-  }
-
   return (
     <div className="fixed inset-0 z-[80] flex items-end bg-slate-950/60 sm:items-center sm:justify-center" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section aria-label="פרופיל" className="max-h-[92dvh] w-full overflow-y-auto rounded-t-[1.75rem] bg-orange-50 p-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] text-slate-950 shadow-2xl dark:bg-slate-900 dark:text-white sm:max-w-md sm:rounded-[1.75rem]">
@@ -105,24 +87,6 @@ export default function ProfileSheet({ onClose, onLogout, onSessionChange, sessi
           <Message text={passwordMessage} />
           <button className={primaryButton} disabled={passwordBusy || !currentPassword || newPassword.length < 8 || confirmPassword.length < 8} type="submit">{passwordBusy ? 'משנה...' : 'שינוי סיסמה'}</button>
         </form>
-
-        {session.is_admin ? (
-          <form className="mt-3 space-y-3 rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-800" onSubmit={generateActivationCode}>
-            <div>
-              <h3 className="font-black">הפעלת חשבון קיים</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">צרו קוד חד־פעמי לאמא או לאוהד ושלחו להם אותו. הקוד תקף ל־24 שעות.</p>
-            </div>
-            <Field label="שם המשתמש הקיים"><input className={inputClass} onChange={(event) => setActivationUsername(event.target.value)} placeholder="אמא" value={activationUsername} /></Field>
-            {activation ? (
-              <div className="rounded-xl bg-cyan-100 p-3 text-center text-cyan-950">
-                <p className="text-xs font-bold">קוד עבור {activation.username}</p>
-                <p className="mt-1 select-all font-mono text-xl font-black tracking-wider" dir="ltr">{activation.code}</p>
-              </div>
-            ) : null}
-            <Message text={activationError} />
-            <button className={primaryButton} disabled={activationBusy || !activationUsername.trim()} type="submit">{activationBusy ? 'יוצר...' : 'יצירת קוד'}</button>
-          </form>
-        ) : null}
 
         <button className="mt-4 h-12 w-full rounded-xl bg-rose-100 font-black text-rose-800 dark:bg-rose-500/20 dark:text-rose-100" onClick={onLogout} type="button">יציאה מהחשבון</button>
       </section>

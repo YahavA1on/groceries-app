@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { activateLegacyAccount, claimLegacyAccount, login, register } from '../lib/auth'
+import { claimLegacyAccount, login, register } from '../lib/auth'
 
 export default function AuthPage({ existingSession = null, onLogin }) {
   const [mode, setMode] = useState(existingSession ? 'setup' : 'login')
@@ -10,19 +10,17 @@ export default function AuthPage({ existingSession = null, onLogin }) {
   const [role, setRole] = useState('owner')
   const [familyName, setFamilyName] = useState(existingSession?.family_name || '')
   const [inviteCode, setInviteCode] = useState('')
-  const [setupCode, setSetupCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   const isRegister = mode === 'register'
   const isSetup = mode === 'setup'
-  const isActivation = mode === 'activation'
 
   async function handleSubmit(event) {
     event.preventDefault()
     setError('')
 
-    if ((isRegister || isSetup || isActivation) && password !== confirmPassword) {
+    if ((isRegister || isSetup) && password !== confirmPassword) {
       setError('הסיסמאות אינן זהות.')
       return
     }
@@ -30,8 +28,6 @@ export default function AuthPage({ existingSession = null, onLogin }) {
     setLoading(true)
     const result = isSetup
       ? await claimLegacyAccount(existingSession, email, password)
-      : isActivation
-        ? await activateLegacyAccount({ email, password, setupCode, username })
       : isRegister
         ? await register({ email, familyName, inviteCode, password, role, username })
         : await login(username, password)
@@ -45,10 +41,9 @@ export default function AuthPage({ existingSession = null, onLogin }) {
   }
 
   const valid = username.trim()
-    && password.length >= (isRegister || isSetup || isActivation ? 8 : 1)
-    && (!isRegister && !isSetup && !isActivation || (email.trim() && confirmPassword.length >= 8))
+    && password.length >= (isRegister || isSetup ? 8 : 1)
+    && (!isRegister && !isSetup || (email.trim() && confirmPassword.length >= 8))
     && (!isRegister || (role === 'owner' ? familyName.trim() : inviteCode.trim()))
-    && (!isActivation || setupCode.trim())
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-slate-950 px-4 py-8 text-white">
@@ -56,10 +51,9 @@ export default function AuthPage({ existingSession = null, onLogin }) {
         <div className="mb-6">
           <p className="text-sm font-bold uppercase tracking-wide text-rose-700">רשימת קניות</p>
           <h1 className="mt-1 text-3xl font-black">
-            {isSetup ? 'אבטחת החשבון' : isActivation ? 'הפעלת חשבון' : isRegister ? 'יצירת משתמש' : 'כניסה'}
+            {isSetup ? 'אבטחת החשבון' : isRegister ? 'יצירת משתמש' : 'כניסה'}
           </h1>
           {isSetup ? <p className="mt-2 text-sm text-slate-500">מוסיפים סיסמה לחשבון הקיים. הפעולה נדרשת פעם אחת.</p> : null}
-          {isActivation ? <p className="mt-2 text-sm text-slate-500">הזינו את הקוד שקיבלתם מיהב. כל הרשימות והנתונים הקיימים יישמרו.</p> : null}
         </div>
 
         <div className="space-y-3">
@@ -75,7 +69,7 @@ export default function AuthPage({ existingSession = null, onLogin }) {
             />
           </Field>
 
-          {(isRegister || isSetup || isActivation) ? (
+          {(isRegister || isSetup) ? (
             <Field label="אימייל">
               <input
                 autoComplete="email"
@@ -91,16 +85,16 @@ export default function AuthPage({ existingSession = null, onLogin }) {
 
           <Field label="סיסמה">
             <input
-              autoComplete={isRegister || isSetup || isActivation ? 'new-password' : 'current-password'}
+              autoComplete={isRegister || isSetup ? 'new-password' : 'current-password'}
               className={inputClass}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder={isRegister || isSetup || isActivation ? 'לפחות 8 תווים' : 'סיסמה'}
+              placeholder={isRegister || isSetup ? 'לפחות 8 תווים' : 'סיסמה'}
               type="password"
               value={password}
             />
           </Field>
 
-          {(isRegister || isSetup || isActivation) ? (
+          {(isRegister || isSetup) ? (
             <Field label="אימות סיסמה">
               <input
                 autoComplete="new-password"
@@ -109,20 +103,6 @@ export default function AuthPage({ existingSession = null, onLogin }) {
                 placeholder="הקלידו שוב"
                 type="password"
                 value={confirmPassword}
-              />
-            </Field>
-          ) : null}
-
-          {isActivation ? (
-            <Field label="קוד הפעלה">
-              <input
-                autoCapitalize="characters"
-                className={`${inputClass} uppercase`}
-                dir="ltr"
-                maxLength="12"
-                onChange={(event) => setSetupCode(event.target.value.toUpperCase())}
-                placeholder="XXXXXXXXXXXX"
-                value={setupCode}
               />
             </Field>
           ) : null}
@@ -153,7 +133,7 @@ export default function AuthPage({ existingSession = null, onLogin }) {
         {error ? <div className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div> : null}
 
         <button className="mt-5 h-12 w-full rounded-xl bg-rose-600 text-base font-black text-white disabled:opacity-60" disabled={loading || !valid} type="submit">
-          {loading ? 'רק רגע...' : isSetup ? 'שמירה והמשך' : isActivation ? 'הפעלת החשבון' : isRegister ? 'הרשמה' : 'כניסה'}
+          {loading ? 'רק רגע...' : isSetup ? 'שמירה והמשך' : isRegister ? 'הרשמה' : 'כניסה'}
         </button>
 
         {!isSetup ? (
@@ -168,11 +148,6 @@ export default function AuthPage({ existingSession = null, onLogin }) {
             >
               {mode === 'login' ? 'משתמש חדש? הרשמה' : 'חזרה לכניסה'}
             </button>
-            {mode === 'login' ? (
-              <button className="h-10 text-sm font-bold text-slate-600 underline" onClick={() => { setMode('activation'); setError('') }} type="button">
-                יש לי חשבון ישן וקוד הפעלה
-              </button>
-            ) : null}
           </div>
         ) : null}
       </form>
