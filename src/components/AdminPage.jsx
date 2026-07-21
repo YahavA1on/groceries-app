@@ -13,6 +13,12 @@ const activityTypes = [
   { key: 'catalog', label: 'מוצרים' },
 ]
 
+const activityPeriods = [
+  { key: 'week', label: 'שבוע' },
+  { key: 'month', label: 'חודש' },
+  { key: 'all', label: 'כל הזמן' },
+]
+
 export default function AdminPage({ onSessionChange, session }) {
   const [summary, setSummary] = useState({})
   const [families, setFamilies] = useState([])
@@ -20,6 +26,7 @@ export default function AdminPage({ onSessionChange, session }) {
   const [users, setUsers] = useState([])
   const [familyId, setFamilyId] = useState('')
   const [activityType, setActivityType] = useState('all')
+  const [activityPeriod, setActivityPeriod] = useState('week')
   const [viewFamilyId, setViewFamilyId] = useState(session.admin_family_id || '')
   const [switchingFamily, setSwitchingFamily] = useState(false)
   const [userSearch, setUserSearch] = useState('')
@@ -33,7 +40,7 @@ export default function AdminPage({ onSessionChange, session }) {
   const [success, setSuccess] = useState('')
 
   const loadDashboard = useCallback(async () => {
-    const result = await fetchAdminDashboard(session, familyId)
+    const result = await fetchAdminDashboard(session, familyId, activityPeriod)
     if (result.error) {
       setError(userErrorMessage(result.error))
     } else {
@@ -44,7 +51,7 @@ export default function AdminPage({ onSessionChange, session }) {
       replaceStateWhenChanged(setUsers, result.data.users)
     }
     setLoading(false)
-  }, [familyId, session])
+  }, [activityPeriod, familyId, session])
 
   useEffect(() => {
     const timeoutId = setTimeout(loadDashboard, 0)
@@ -183,7 +190,7 @@ export default function AdminPage({ onSessionChange, session }) {
             <MetricCard label="משפחות" value={summary.families} tone="cyan" />
             <MetricCard label="משתמשים" value={summary.users} tone="rose" />
             <MetricCard label="בקשות פתוחות" value={summary.pending_requests} tone="amber" />
-            <MetricCard label="פעילים היום" value={summary.active_users_24h} tone="emerald" />
+            <MetricCard label="פעילים ב־24 שעות" value={summary.active_users_24h} tone="emerald" />
           </div>
 
           {session.is_system_admin ? (
@@ -286,6 +293,12 @@ export default function AdminPage({ onSessionChange, session }) {
             <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
               {activityTypes.map((type) => (
                 <button className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${activityType === type.key ? 'bg-slate-950 text-white dark:bg-cyan-400 dark:text-slate-950' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`} key={type.key} onClick={() => setActivityType(type.key)} type="button">{type.label}</button>
+              ))}
+            </div>
+
+            <div className="mt-2 grid grid-cols-3 gap-2 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+              {activityPeriods.map((period) => (
+                <button className={`rounded-lg px-2 py-2 text-xs font-black transition ${activityPeriod === period.key ? 'bg-white text-slate-950 shadow-sm dark:bg-cyan-400 dark:text-slate-950' : 'text-slate-500 dark:text-slate-300'}`} key={period.key} onClick={() => setActivityPeriod(period.key)} type="button">{period.label}</button>
               ))}
             </div>
 

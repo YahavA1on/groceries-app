@@ -1,14 +1,15 @@
 import { supabase } from './supabase'
 
-export async function fetchAdminDashboard(session, familyId = null) {
+export async function fetchAdminDashboard(session, familyId = null, activityPeriod = 'week') {
   const [summaryResult, familiesResult, activityResult, usersResult] = await Promise.all([
     supabase.rpc('admin_dashboard_summary', { p_session_token: session.token }),
     supabase.rpc('admin_list_families', { p_session_token: session.token }),
     supabase.rpc('admin_list_activity', {
       p_session_token: session.token,
       p_family_id: familyId || null,
-      p_limit: 120,
+      p_limit: 1000,
       p_before_id: null,
+      p_since: activityPeriodStart(activityPeriod),
     }),
     supabase.rpc('admin_list_users', { p_session_token: session.token }),
   ])
@@ -23,6 +24,12 @@ export async function fetchAdminDashboard(session, familyId = null) {
     },
     error,
   }
+}
+
+function activityPeriodStart(period) {
+  if (period === 'all') return null
+  const days = period === 'month' ? 30 : 7
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
 }
 
 export async function deleteAdminUser(session, userId) {

@@ -9,11 +9,17 @@
 }
 
 @utility app-modal-panel {
-  @apply my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto;
+  @apply my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto overscroll-contain;
 }
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
+  html:has(.app-modal-overlay),
+  body:has(.app-modal-overlay) {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   :root {
     direction: rtl;
     font-family: Assistant, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
