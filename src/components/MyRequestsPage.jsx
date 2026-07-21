@@ -4,6 +4,7 @@ import ShoppingNotes from './ShoppingNotes'
 import TopNotice from './TopNotice'
 import { DEFAULT_MANUFACTURER, applyRelatedRatings, deleteShoppingItem, fetchRatingsByOwner, fetchShoppingListItems, setShoppingItemQuantity } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupRowsByRank } from '../lib/foodFilters'
+import { replaceStateWhenChanged } from '../lib/stateUpdates'
 
 export default function MyRequestsPage({ session }) {
   const [items, setItems] = useState([])
@@ -15,7 +16,6 @@ export default function MyRequestsPage({ session }) {
   const [error, setError] = useState('')
 
   const loadItems = useCallback(async () => {
-    setLoading(true)
     setError('')
 
     const [itemsResult, ratingsResult] = await Promise.all([
@@ -27,12 +27,12 @@ export default function MyRequestsPage({ session }) {
       setError(itemsResult.error.message)
       setItems([])
     } else {
-      setItems(itemsResult.data || [])
+      replaceStateWhenChanged(setItems, itemsResult.data || [])
     }
 
     if (!ratingsResult.error) {
       const foods = (itemsResult.data || []).map((item) => item.food).filter(Boolean)
-      setRatings(applyRelatedRatings(foods, ratingsResult.data, ratingsResult.rows))
+      replaceStateWhenChanged(setRatings, applyRelatedRatings(foods, ratingsResult.data, ratingsResult.rows))
     }
     setLoading(false)
   }, [session])

@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
 import ShoppingNotes from './ShoppingNotes'
 import TopNotice from './TopNotice'
-import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchRatingsByOwner, fetchShoppingListItems, finishFamilyShopping, setShoppingItemCart } from '../lib/foodData'
+import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchRatingsByOwner, fetchShoppingListItems, finishFamilyShopping, setShoppingItemCart, updateFoodUnitQuantity } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRatingMood } from '../lib/foodFilters'
+import { replaceStateWhenChanged } from '../lib/stateUpdates'
 
 export default function FulfillmentPage({ session }) {
   const [items, setItems] = useState([])
@@ -16,11 +17,13 @@ export default function FulfillmentPage({ session }) {
   const [finishing, setFinishing] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [editingWeightItem, setEditingWeightItem] = useState(null)
+  const [weightValue, setWeightValue] = useState('')
+  const [weightBusy, setWeightBusy] = useState(false)
 
   const familyId = session.family_id
 
   const loadItems = useCallback(async () => {
-    setLoading(true)
     setError('')
 
     const [listRes, ratingsRes] = await Promise.all([
@@ -32,13 +35,13 @@ export default function FulfillmentPage({ session }) {
       setError(listRes.error.message)
       setItems([])
     } else {
-      setItems(listRes.data || [])
+      replaceStateWhenChanged(setItems, listRes.data || [])
     }
 
     setOwnerName(session.family_name || '')
     if (!ratingsRes.error) {
       const foods = (listRes.data || []).map((item) => item.food).filter(Boolean)
-      setRatings(applyRelatedRatings(foods, ratingsRes.data, ratingsRes.rows))
+      replaceStateWhenChanged(setRatings, applyRelatedRatings(foods, ratingsRes.data, ratingsRes.rows))
     }
     setLoading(false)
   }, [session])
@@ -96,6 +99,31 @@ export default function FulfillmentPage({ session }) {
     await loadItems()
   }
 
+  function openWeightEditor(item) {
+    setEditingWeightItem(item)
+    setWeightValue(item.food?.unit_qty || '')
+  }
+
+  async function saveWeight(event) {
+    event.preventDefault()
+    if (!editingWeightItem?.food_id || !weightValue.trim()) return
+    setWeightBusy(true)
+    setError('')
+    const { error: updateError } = await updateFoodUnitQuantity(session, editingWeightItem.food_id, weightValue)
+    setWeightBusy(false)
+    if (updateError) {
+      setError(updateError.message)
+      return
+    }
+    setItems((current) => current.map((item) => (
+      item.food_id === editingWeightItem.food_id
+        ? { ...item, food: { ...item.food, unit_qty: weightValue.trim() } }
+        : item
+    )))
+    setEditingWeightItem(null)
+    setSuccess('משקל המוצר עודכן.')
+  }
+
   if (!familyId) {
     return (
       <section className="rounded-2xl bg-white p-6 text-center shadow-sm dark:bg-slate-900">
@@ -139,13 +167,14 @@ export default function FulfillmentPage({ session }) {
         <EmptyState text="אין פריטים שמתאימים לסינון הזה." />
       ) : (
         <>
-          <ItemSection emptyText="אין פריטים ממתינים." items={pending} onAction={(item) => setInCart(item, true)} pinned ratings={ratings} savingId={savingId} title="מבוקשים" />
+          <ItemSection emptyText="אין פריטים ממתינים." items={pending} onAction={(item) => setInCart(item, true)} onEditWeight={openWeightEditor} pinned ratings={ratings} savingId={savingId} title="מבוקשים" />
           <ItemSection
             actionLabel="החזרה"
             emptyText="העגלה ריקה."
             inCart
             items={cartItems}
             onAction={(item) => setInCart(item, false)}
+            onEditWeight={openWeightEditor}
             ratings={ratings}
             savingId={savingId}
             title="בעגלה"
@@ -171,11 +200,22 @@ export default function FulfillmentPage({ session }) {
           </div>
         </div>
       ) : null}
+
+      {editingWeightItem ? (
+        <WeightEditSheet
+          busy={weightBusy}
+          item={editingWeightItem}
+          onCancel={() => setEditingWeightItem(null)}
+          onSubmit={saveWeight}
+          onValueChange={setWeightValue}
+          value={weightValue}
+        />
+      ) : null}
     </section>
   )
 }
 
-function ItemSection({ actionLabel = 'הוספה', emptyText, inCart = false, items, onAction, pinned = false, ratings, savingId, title }) {
+function ItemSection({ actionLabel = 'הוספה', emptyText, inCart = false, items, onAction, onEditWeight, pinned = false, ratings, savingId, title }) {
   const groups = groupRowsByRatingMood(items, ratings)
 
   return (
@@ -197,7 +237,10 @@ function ItemSection({ actionLabel = 'הוספה', emptyText, inCart = false, it
                   <div className="min-w-0 flex-1">
                     <h4 className="line-clamp-2 font-black leading-tight">{item.food?.name || 'מוצר שנמחק'}</h4>
                     <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{item.food?.manufacturer || DEFAULT_MANUFACTURER}</p>
-                    <p className="mt-1 text-sm font-black text-rose-700 dark:text-cyan-300">{item.food?.unit_qty || 'יחידת מידה לא צוינה'}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <p className="text-sm font-black text-rose-700 dark:text-cyan-300">{item.food?.unit_qty || 'יחידת מידה לא צוינה'}</p>
+                      <button className="rounded-lg bg-cyan-100 px-2 py-1 text-xs font-black text-cyan-950 dark:bg-cyan-400/20 dark:text-cyan-200" onClick={() => onEditWeight(item)} type="button">שינוי משקל</button>
+                    </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-black">
                       <span className={`rounded-lg px-2 py-1 ${group.badge}`}>{group.title}</span>
                       <span className="rounded-lg bg-slate-100 px-2 py-1 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{getFoodCategoryLabel(item.food)}</span>
@@ -247,4 +290,23 @@ function FoodThumb({ food }) {
 
 function EmptyState({ text }) {
   return <div className="rounded-2xl border border-dashed border-rose-200 bg-white p-8 text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">{text}</div>
+}
+
+function WeightEditSheet({ busy, item, onCancel, onSubmit, onValueChange, value }) {
+  return (
+    <div className="fixed inset-0 z-[75] flex items-end bg-slate-950/60 p-3 sm:items-center sm:justify-center">
+      <form className="w-full rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900 sm:max-w-md" onSubmit={onSubmit}>
+        <h3 className="text-xl font-black">שינוי משקל</h3>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{item.food?.name}</p>
+        <label className="mt-4 block">
+          <span className="mb-1 block text-sm font-bold">משקל או יחידת מידה</span>
+          <input autoFocus className="h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-base text-slate-950 outline-none focus:border-rose-600 dark:border-slate-600 dark:bg-slate-950 dark:text-white" maxLength="60" onChange={(event) => onValueChange(event.target.value)} placeholder='לדוגמה: 500 גרם או 1 ק״ג' value={value} />
+        </label>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button className="h-11 rounded-xl bg-slate-100 font-black text-slate-700 dark:bg-slate-800 dark:text-slate-200" disabled={busy} onClick={onCancel} type="button">ביטול</button>
+          <button className="h-11 rounded-xl bg-rose-600 font-black text-white disabled:opacity-50 dark:bg-cyan-400 dark:text-slate-950" disabled={busy || !value.trim()} type="submit">{busy ? 'שומר...' : 'שמירה'}</button>
+        </div>
+      </form>
+    </div>
+  )
 }

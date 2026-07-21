@@ -39,11 +39,25 @@ export async function fetchInventoryRows(session) {
   if (result.error) return normalizeNestedFoodResult(result)
 
   const rows = result.data || []
-  const foodsResult = await fetchFoodsByIds(rows.map((row) => row.food_id))
+  const [foodsResult, additionsResult] = await Promise.all([
+    fetchFoodsByIds(rows.map((row) => row.food_id)),
+    supabase.rpc('list_family_inventory_additions', { p_session_token: session?.token }),
+  ])
+  if (additionsResult.error) return { ...result, error: additionsResult.error, data: [] }
   const foodsById = new Map((foodsResult.data || []).map((food) => [food.id, food]))
+  const additionsByFoodId = new Map()
+  for (const addition of additionsResult.data || []) {
+    const additions = additionsByFoodId.get(addition.food_id) || []
+    additions.push({ ...addition, quantity: Number(addition.quantity || 0) })
+    additionsByFoodId.set(addition.food_id, additions)
+  }
   return normalizeNestedFoodResult({
     ...result,
-    data: rows.map((row) => ({ ...row, food: foodsById.get(row.food_id) || null })),
+    data: rows.map((row) => ({
+      ...row,
+      additions: additionsByFoodId.get(row.food_id) || [],
+      food: foodsById.get(row.food_id) || null,
+    })),
   })
 }
 
@@ -153,6 +167,14 @@ export async function deleteShoppingItem(session, itemId) {
 export async function finishFamilyShopping(session) {
   return supabase.rpc('finish_family_shopping', {
     p_session_token: session.token,
+  })
+}
+
+export async function updateFoodUnitQuantity(session, foodId, unitQuantity) {
+  return supabase.rpc('set_family_food_unit_qty', {
+    p_session_token: session.token,
+    p_food_id: foodId,
+    p_unit_qty: unitQuantity.trim(),
   })
 }
 

@@ -29,7 +29,6 @@ export default function CatalogPage({ onSubmitted, session }) {
   const canManageItems = session.member_role === 'manager' || session.is_admin
 
   const loadFoods = useCallback(async () => {
-    setLoading(true)
     setError('')
 
     const [foodsResult, ratingsResult] = await Promise.all([

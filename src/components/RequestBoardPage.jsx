@@ -3,6 +3,7 @@ import TopNotice from './TopNotice'
 import { formatDate } from '../lib/format'
 import { fetchShoppingListItems } from '../lib/foodData'
 import { isNonFoodProduct } from '../lib/productRules'
+import { replaceStateWhenChanged } from '../lib/stateUpdates'
 
 export default function RequestBoardPage({ onStartShopping, session }) {
   const [rows, setRows] = useState([])
@@ -10,7 +11,6 @@ export default function RequestBoardPage({ onStartShopping, session }) {
   const [error, setError] = useState('')
 
   const loadRows = useCallback(async () => {
-    setLoading(true)
     setError('')
 
     const { data, error: queryError } = await fetchShoppingListItems(session)
@@ -19,7 +19,7 @@ export default function RequestBoardPage({ onStartShopping, session }) {
       setError(queryError.message)
       setRows([])
     } else {
-      setRows((data || [])
+      replaceStateWhenChanged(setRows, (data || [])
         .filter((row) => !row.in_cart && !isNonFoodProduct(row.food))
         .map((row) => ({ ...row, owner: { id: session.owner_id, username: session.family_name } })))
     }

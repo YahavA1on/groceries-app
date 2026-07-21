@@ -4,6 +4,7 @@ import TopNotice from './TopNotice'
 import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchInventoryRows, fetchRatingsByOwner, setInventoryQuantity } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRank, groupRowsByRatingMood } from '../lib/foodFilters'
 import { formatDate } from '../lib/format'
+import { replaceStateWhenChanged } from '../lib/stateUpdates'
 
 export default function InventoryPage({ session }) {
   const [rows, setRows] = useState([])
@@ -19,8 +20,6 @@ export default function InventoryPage({ session }) {
   const loadInventory = useCallback(async () => {
     if (!familyId) return
 
-    setLoading(true)
-
     const [inventoryResult, ratingsResult] = await Promise.all([
       fetchInventoryRows(session),
       fetchRatingsByOwner(session),
@@ -30,12 +29,12 @@ export default function InventoryPage({ session }) {
       setNotice({ tone: 'error', text: inventoryResult.error.message })
       setRows([])
     } else {
-      setRows(sortInventoryRows(inventoryResult.data || []))
+      replaceStateWhenChanged(setRows, sortInventoryRows(inventoryResult.data || []))
     }
 
     if (!ratingsResult.error) {
       const foods = (inventoryResult.data || []).map((row) => row.food).filter(Boolean)
-      setRatings(applyRelatedRatings(foods, ratingsResult.data, ratingsResult.rows))
+      replaceStateWhenChanged(setRatings, applyRelatedRatings(foods, ratingsResult.data, ratingsResult.rows))
     }
     setLoading(false)
   }, [familyId, session])
@@ -74,6 +73,7 @@ export default function InventoryPage({ session }) {
           ? current.filter((entry) => inventoryRowKey(entry) !== rowKey)
           : current.map((entry) => (inventoryRowKey(entry) === rowKey ? { ...entry, quantity: nextQuantity } : entry))
       )
+      await loadInventory()
       setNotice({ tone: 'success', text: nextQuantity <= 0 ? 'המוצר הוסר מהמלאי.' : 'הכמות עודכנה.' })
     } catch (quantityError) {
       setNotice({ tone: 'error', text: quantityError.message })
@@ -156,7 +156,7 @@ function CategorySubheading({ count, title }) {
 }
 
 function InventoryRow({ group, isAdjusting, onDecrease, onIncrease, row }) {
-  const date = inventoryAddedDate(row)
+  const additions = inventoryAdditionGroups(row)
 
   return (
     <article className={`rounded-2xl bg-white p-3 shadow-sm ring-1 ${group.ring} dark:bg-slate-900`}>
@@ -192,10 +192,19 @@ function InventoryRow({ group, isAdjusting, onDecrease, onIncrease, row }) {
               +
             </button>
           </div>
-          <span className="mt-2 block max-w-32 text-xs font-bold leading-tight text-slate-500 dark:text-slate-400">
-            {date ? `תאריך הוספה: ${formatDate(date)}` : 'תאריך הוספה: לא זמין'}
-          </span>
         </div>
+      </div>
+      <div className="mt-3 border-t border-slate-100 pt-2 dark:border-slate-800">
+        <p className="mb-1 text-xs font-black text-slate-500 dark:text-slate-400">הוספות למלאי</p>
+        {additions.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {additions.map((addition) => (
+              <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200" key={addition.dateKey}>
+                x{formatQuantity(addition.quantity)} · {formatDate(addition.addedAt)}
+              </span>
+            ))}
+          </div>
+        ) : <p className="text-xs text-slate-400">תאריך ההוספה אינו זמין.</p>}
       </div>
     </article>
   )
@@ -218,7 +227,25 @@ function EmptyState({ text }) {
 }
 
 function inventoryAddedDate(row) {
-  return row.added_at || row.created_at || row.last_purchased_at || row.purchased_at || row.purchase_date || row.updated_at || ''
+  const latestAddition = [...(row.additions || [])]
+    .sort((a, b) => new Date(b.added_at || 0) - new Date(a.added_at || 0))[0]
+  return latestAddition?.added_at || row.added_at || row.created_at || row.last_purchased_at || row.purchased_at || row.purchase_date || row.updated_at || ''
+}
+
+function inventoryAdditionGroups(row) {
+  const groups = new Map()
+  for (const addition of row.additions || []) {
+    if (!addition.added_at) continue
+    const dateKey = new Date(addition.added_at).toISOString().slice(0, 10)
+    const existing = groups.get(dateKey) || { addedAt: addition.added_at, dateKey, quantity: 0 }
+    existing.quantity += Number(addition.quantity || 0)
+    groups.set(dateKey, existing)
+  }
+  return Array.from(groups.values()).sort((a, b) => new Date(a.addedAt) - new Date(b.addedAt))
+}
+
+function formatQuantity(quantity) {
+  return Number.isInteger(quantity) ? quantity : Number(quantity.toFixed(3))
 }
 
 function sortInventoryRows(rows) {
