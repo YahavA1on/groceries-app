@@ -158,6 +158,7 @@ function RecipeCard({ inventoryByFoodId, onChoose, recipe }) {
         <div className="mt-3 flex flex-wrap gap-2 text-xs font-black">
           <span className="rounded-xl bg-orange-100 px-3 py-2 text-orange-800 dark:bg-orange-400/15 dark:text-orange-200">⏱ {formatTime(recipe.total_time_minutes)}</span>
           {recipe.servings ? <span className="rounded-xl bg-slate-100 px-3 py-2 text-slate-700 dark:bg-slate-800 dark:text-slate-200">🍽 {formatNumber(recipe.servings)} מנות</span> : null}
+          <span className="rounded-xl bg-cyan-100 px-3 py-2 text-cyan-900 dark:bg-cyan-400/15 dark:text-cyan-200">{Number(recipe.inventory_match_percent || 0)}% מהמרכיבים בבית</span>
           <span className={`rounded-xl px-3 py-2 ${availability.ready ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200' : 'bg-red-100 text-red-800 dark:bg-red-400/15 dark:text-red-200'}`}>
             {availability.ready ? 'כל המרכיבים זמינים' : `${availability.missing} מרכיבים חסרים`}
           </span>

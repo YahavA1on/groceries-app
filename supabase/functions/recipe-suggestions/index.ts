@@ -26,6 +26,10 @@ type RecipeCandidate = {
   ingredient_lines: string[]
 }
 
+type SearchCandidate = Omit<RecipeCandidate, 'external_key' | 'servings' | 'ingredient_lines'> & {
+  fallback_ingredients: string[]
+}
+
 Deno.serve(async (request) => {
   const origin = request.headers.get('origin') || ''
   const corsHeaders = buildCorsHeaders(origin)
@@ -75,10 +79,30 @@ async function searchHebrewRecipes(inventory: InventoryItem[]) {
 
   const searchTerms = inventory
     .filter((item) => item.name && !/מים|water/i.test(item.name))
-    .slice(0, 5)
+    .slice(0, 6)
     .map((item) => genericFoodName(item.name))
     .filter(Boolean)
-  const query = `מתכונים עם ${searchTerms.slice(0, 4).join(' ')}`
+  const searchQueries = Array.from(new Set([
+    `מתכונים עם ${searchTerms.slice(0, 4).join(' ')}`,
+    `מתכונים עם ${searchTerms.slice(0, 2).join(' ')}`,
+    `מתכונים עם ${[searchTerms[2], searchTerms[3], searchTerms[0]].filter(Boolean).join(' ')}`,
+  ].filter((query) => query.trim() !== 'מתכונים עם')))
+  const detailed: RecipeCandidate[] = []
+  const seenUrls = new Set<string>()
+
+  for (const query of searchQueries) {
+    const baseCandidates = (await fetchSerpCandidates(query, apiKey))
+      .filter((candidate) => !seenUrls.has(candidate.source_url))
+    for (const candidate of baseCandidates) seenUrls.add(candidate.source_url)
+    const enriched = await Promise.all(baseCandidates.map(enrichRecipeCandidate))
+    detailed.push(...enriched.filter((candidate): candidate is RecipeCandidate => candidate !== null))
+    if (detailed.length >= 5) break
+  }
+
+  return detailed.slice(0, MAX_RECIPES)
+}
+
+async function fetchSerpCandidates(query: string, apiKey: string): Promise<SearchCandidate[]> {
   const url = new URL('https://serpapi.com/search.json')
   url.searchParams.set('engine', 'google')
   url.searchParams.set('q', query)
@@ -93,7 +117,7 @@ async function searchHebrewRecipes(inventory: InventoryItem[]) {
   if (payload?.error) throw new Error(`SerpApi: ${String(payload.error).slice(0, 300)}`)
 
   const results = Array.isArray(payload?.recipes_results) ? payload.recipes_results : []
-  const baseCandidates = results.flatMap((result: Record<string, unknown>) => {
+  return results.flatMap((result: Record<string, unknown>) => {
     const rating = Number(result.rating)
     const sourceUrl = cleanString(result.link, 2000)
     const totalTime = parseDurationMinutes(result.total_time)
@@ -111,37 +135,35 @@ async function searchHebrewRecipes(inventory: InventoryItem[]) {
         : [],
     }]
   }).slice(0, MAX_RECIPES)
+}
 
-  const detailed = await Promise.all(baseCandidates.map(async (candidate) => {
-    try {
-      const structured = await fetchStructuredRecipe(candidate.source_url)
-      if (!structured) return null
-      const rating = Number(structured.aggregateRating?.ratingValue) || candidate.rating
-      const totalTime = parseDurationMinutes(structured.totalTime)
-        || parseDurationMinutes(structured.prepTime) + parseDurationMinutes(structured.cookTime)
-        || candidate.total_time_minutes
-      const ingredients = Array.isArray(structured.recipeIngredient)
-        ? structured.recipeIngredient.map((item: unknown) => cleanString(item, 500)).filter(Boolean)
-        : candidate.fallback_ingredients
-      if (rating < 4 || !totalTime || ingredients.length === 0) return null
-      return {
-        external_key: await sha256(candidate.source_url),
-        title: cleanString(structured.name, 300) || candidate.title,
-        source_name: candidate.source_name,
-        source_url: candidate.source_url,
-        rating: Math.min(5, rating),
-        reviews: Math.max(0, Number(structured.aggregateRating?.ratingCount || structured.aggregateRating?.reviewCount) || candidate.reviews),
-        total_time_minutes: totalTime,
-        image_url: structuredImage(structured.image) || candidate.image_url,
-        servings: parseServings(structured.recipeYield),
-        ingredient_lines: ingredients.slice(0, 40),
-      } satisfies RecipeCandidate
-    } catch {
-      return null
+async function enrichRecipeCandidate(candidate: SearchCandidate): Promise<RecipeCandidate | null> {
+  try {
+    const structured = await fetchStructuredRecipe(candidate.source_url)
+    if (!structured) return null
+    const rating = Number(structured.aggregateRating?.ratingValue) || candidate.rating
+    const totalTime = parseDurationMinutes(structured.totalTime)
+      || parseDurationMinutes(structured.prepTime) + parseDurationMinutes(structured.cookTime)
+      || candidate.total_time_minutes
+    const ingredients = Array.isArray(structured.recipeIngredient)
+      ? structured.recipeIngredient.map((item: unknown) => cleanString(item, 500)).filter(Boolean)
+      : candidate.fallback_ingredients
+    if (rating < 4 || !totalTime || ingredients.length === 0) return null
+    return {
+      external_key: await sha256(candidate.source_url),
+      title: cleanString(structured.name, 300) || candidate.title,
+      source_name: candidate.source_name,
+      source_url: candidate.source_url,
+      rating: Math.min(5, rating),
+      reviews: Math.max(0, Number(structured.aggregateRating?.ratingCount || structured.aggregateRating?.reviewCount) || candidate.reviews),
+      total_time_minutes: totalTime,
+      image_url: structuredImage(structured.image) || candidate.image_url,
+      servings: parseServings(structured.recipeYield),
+      ingredient_lines: ingredients.slice(0, 40),
     }
-  }))
-
-  return detailed.filter((candidate): candidate is RecipeCandidate => candidate !== null)
+  } catch {
+    return null
+  }
 }
 
 async function fetchStructuredRecipe(value: string) {
@@ -230,8 +252,9 @@ async function normalizeRecipes(candidates: RecipeCandidate[], inventory: Invent
   const output = JSON.parse(outputText)
   const normalized = Array.isArray(output?.recipes) ? output.recipes : []
   const inventoryIds = new Set(inventory.map((item) => item.food_id))
+  const inventoryQuantities = new Map(inventory.map((item) => [item.food_id, Number(item.quantity || 0)]))
 
-  return candidates.flatMap((candidate, index) => {
+  const normalizedRecipes = candidates.flatMap((candidate, index) => {
     const result = normalized.find((item: Record<string, unknown>) => Number(item.recipe_index) === index)
     if (!result || !Array.isArray(result.ingredients)) return []
     const ingredients = result.ingredients.slice(0, 40).map((item: Record<string, unknown>) => {
@@ -246,13 +269,28 @@ async function normalizeRecipes(candidates: RecipeCandidate[], inventory: Invent
       }
     })
     if (ingredients.length === 0) return []
+    const requiredIngredients = ingredients.filter((ingredient) => !ingredient.optional)
+    const availableIngredients = requiredIngredients.filter((ingredient) => (
+      ingredient.food_id
+      && ingredient.inventory_quantity_required > 0
+      && Number(inventoryQuantities.get(ingredient.food_id) || 0) >= ingredient.inventory_quantity_required
+    ))
+    const inventoryMatchPercent = requiredIngredients.length > 0
+      ? Math.round((availableIngredients.length / requiredIngredients.length) * 100)
+      : 0
     return [{
       ...candidate,
       title: cleanString(result.title, 300) || candidate.title,
       ingredient_lines: undefined,
       ingredients,
+      inventory_match_percent: inventoryMatchPercent,
     }]
   })
+  return normalizedRecipes.sort((a, b) => (
+    b.inventory_match_percent - a.inventory_match_percent
+    || b.rating - a.rating
+    || b.reviews - a.reviews
+  )).slice(0, MAX_RECIPES)
 }
 
 function recipeSchema() {
