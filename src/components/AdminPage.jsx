@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import TopNotice from './TopNotice'
-import { fetchAdminDashboard, selectAdminFamily } from '../lib/adminData'
+import { deleteAdminUser, fetchAdminDashboard, selectAdminFamily } from '../lib/adminData'
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
 import { userErrorMessage } from '../lib/userErrors'
 
@@ -16,10 +16,14 @@ export default function AdminPage({ onSessionChange, session }) {
   const [summary, setSummary] = useState({})
   const [families, setFamilies] = useState([])
   const [activity, setActivity] = useState([])
+  const [users, setUsers] = useState([])
   const [familyId, setFamilyId] = useState('')
   const [activityType, setActivityType] = useState('all')
-  const [viewFamilyId, setViewFamilyId] = useState(session.family_id || '')
+  const [viewFamilyId, setViewFamilyId] = useState(session.admin_family_id || '')
   const [switchingFamily, setSwitchingFamily] = useState(false)
+  const [userSearch, setUserSearch] = useState('')
+  const [userFamilyId, setUserFamilyId] = useState('')
+  const [deletingUserId, setDeletingUserId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -32,6 +36,7 @@ export default function AdminPage({ onSessionChange, session }) {
       replaceStateWhenChanged(setSummary, result.data.summary)
       replaceStateWhenChanged(setFamilies, result.data.families)
       replaceStateWhenChanged(setActivity, result.data.activity)
+      replaceStateWhenChanged(setUsers, result.data.users)
     }
     setLoading(false)
   }, [familyId, session])
@@ -49,6 +54,13 @@ export default function AdminPage({ onSessionChange, session }) {
     () => activity.filter((item) => activityType === 'all' || activityGroup(item.entity_type) === activityType),
     [activity, activityType]
   )
+  const visibleUsers = useMemo(() => {
+    const needle = userSearch.trim().toLocaleLowerCase('he')
+    return users.filter((user) => (
+      (!userFamilyId || user.family_id === userFamilyId)
+      && (!needle || `${user.username} ${user.email || ''} ${user.family_name || ''}`.toLocaleLowerCase('he').includes(needle))
+    ))
+  }, [userFamilyId, userSearch, users])
 
   async function changeFamilyView(nextFamilyId) {
     setSwitchingFamily(true)
@@ -60,6 +72,28 @@ export default function AdminPage({ onSessionChange, session }) {
     }
     setViewFamilyId(nextFamilyId || '')
     onSessionChange(result.data)
+  }
+
+  async function deleteUser(user) {
+    const typedName = window.prompt(`למחיקת המשתמש ${user.username}, הקלידו את שם המשתמש בדיוק:`)
+    if (typedName !== user.username) return
+    setDeletingUserId(user.user_id)
+    const result = await deleteAdminUser(session, user.user_id)
+    setDeletingUserId('')
+    if (result.error) {
+      setError(userErrorMessage(result.error))
+      return
+    }
+    if (result.data?.error) {
+      const messages = {
+        CANNOT_DELETE_SELF_HERE: 'כדי למחוק את החשבון שלך יש להשתמש באפשרות שבפרופיל.',
+        PROTECTED_ADMIN: 'לא ניתן למחוק חשבון מנהל מוגן.',
+        USER_NOT_FOUND: 'המשתמש לא נמצא או שכבר נמחק.',
+      }
+      setError(messages[result.data.error] || 'לא ניתן למחוק את המשתמש.')
+      return
+    }
+    await loadDashboard()
   }
 
   return (
@@ -91,10 +125,10 @@ export default function AdminPage({ onSessionChange, session }) {
               <p className="mt-1 text-xs text-indigo-700 dark:text-indigo-200">בחרו משפחה כדי לפתוח את כל עמודי האתר כמנהל מערכת.</p>
               <div className="mt-3 flex gap-2">
                 <select className="h-11 min-w-0 flex-1 rounded-xl border border-indigo-200 bg-white px-3 text-sm font-bold outline-none dark:border-slate-700 dark:bg-slate-900" disabled={switchingFamily} onChange={(event) => setViewFamilyId(event.target.value)} value={viewFamilyId}>
-                  <option value="">תצוגה כללית</option>
+                  <option value="">{session.home_family_id ? 'המשפחה שלי' : 'תצוגה כללית'}</option>
                   {families.map((family) => <option key={family.family_id} value={family.family_id}>{family.family_name}</option>)}
                 </select>
-                <button className="h-11 shrink-0 rounded-xl bg-indigo-950 px-4 text-sm font-black text-white disabled:opacity-50 dark:bg-cyan-400 dark:text-slate-950" disabled={switchingFamily || viewFamilyId === (session.family_id || '')} onClick={() => changeFamilyView(viewFamilyId)} type="button">{switchingFamily ? 'עובר...' : viewFamilyId ? 'פתיחה' : 'יציאה'}</button>
+                <button className="h-11 shrink-0 rounded-xl bg-indigo-950 px-4 text-sm font-black text-white disabled:opacity-50 dark:bg-cyan-400 dark:text-slate-950" disabled={switchingFamily || viewFamilyId === (session.admin_family_id || '')} onClick={() => changeFamilyView(viewFamilyId)} type="button">{switchingFamily ? 'עובר...' : viewFamilyId ? 'פתיחה' : 'חזרה'}</button>
               </div>
               {session.family_id ? <p className="mt-2 text-xs font-bold text-emerald-700 dark:text-emerald-300">מציג כעת: {session.family_name}. עמודי האתר המלאים זמינים בתפריט התחתון.</p> : null}
             </div>
@@ -124,6 +158,42 @@ export default function AdminPage({ onSessionChange, session }) {
                   </div>
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
+            <div>
+              <h3 className="text-lg font-black">משתמשים</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">כל המשתמשים הפעילים באתר. חשבונות מנהל מוגנים ממחיקה.</p>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <input className="h-11 min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none dark:border-slate-700 dark:bg-slate-800" onChange={(event) => setUserSearch(event.target.value)} placeholder="חיפוש משתמש" value={userSearch} />
+              <select className="h-11 min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2 text-sm font-bold outline-none dark:border-slate-700 dark:bg-slate-800" onChange={(event) => setUserFamilyId(event.target.value)} value={userFamilyId}>
+                <option value="">כל המשפחות</option>
+                {families.map((family) => <option key={family.family_id} value={family.family_id}>{family.family_name}</option>)}
+              </select>
+            </div>
+            <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+              <table className="w-full min-w-[48rem] border-collapse text-right text-sm">
+                <thead className="bg-slate-100 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  <tr><th className="p-3">משתמש</th><th className="p-3">אימייל</th><th className="p-3">משפחה</th><th className="p-3">תפקיד</th><th className="p-3">כניסה אחרונה</th><th className="p-3">חיבורים</th><th className="p-3">פעולה</th></tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {visibleUsers.map((user) => (
+                    <tr key={user.user_id}>
+                      <td className="p-3 font-black">{user.username}{user.is_admin ? <span className="me-2 rounded bg-violet-100 px-2 py-1 text-[0.65rem] text-violet-800 dark:bg-violet-400/20 dark:text-violet-200">מנהל</span> : null}</td>
+                      <td className="p-3" dir="ltr">{user.email || '—'}</td>
+                      <td className="p-3">{user.family_name || 'ללא משפחה'}</td>
+                      <td className="p-3">{user.member_role === 'manager' ? 'ניהול הבית' : user.app_role === 'shopper' ? 'קונה' : 'ללא שיוך'}</td>
+                      <td className="p-3">{user.last_login_at ? relativeTime(user.last_login_at) : 'לא ידוע'}</td>
+                      <td className="p-3">{user.active_sessions}</td>
+                      <td className="p-3">
+                        {user.is_admin ? <span className="text-xs font-bold text-slate-400">מוגן</span> : <button className="rounded-lg bg-red-50 px-3 py-2 text-xs font-black text-red-700 disabled:opacity-50 dark:bg-red-500/10 dark:text-red-200" disabled={deletingUserId === user.user_id} onClick={() => deleteUser(user)} type="button">{deletingUserId === user.user_id ? 'מוחק...' : 'מחיקה'}</button>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 

@@ -206,7 +206,7 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
           session={session}
         />
       ) : null}
-      {session.family_id && !session.is_system_admin ? <PushNotificationPrompt session={session} /> : null}
+      {session.family_id && (!session.is_system_admin || session.family_id === session.home_family_id) ? <PushNotificationPrompt session={session} /> : null}
     </div>
   )
 }

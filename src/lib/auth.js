@@ -6,6 +6,7 @@ const STORAGE_KEY = 'groceries_session'
 const errorMessages = {
   ACCOUNT_EXISTS: 'המשתמש כבר קיים.',
   ACCOUNT_LOCKED: 'החשבון ננעל ל-15 דקות בעקבות ניסיונות כניסה שגויים.',
+  CANNOT_DELETE_SELF_HERE: 'כדי למחוק את החשבון שלך יש להשתמש באפשרות שבפרופיל.',
   ADMIN_EMAIL_MISMATCH: 'חשבון המנהל חייב להשתמש באימייל שהוגדר מראש.',
   ALREADY_CONFIGURED: 'החשבון כבר הוגדר. אפשר להתחבר כרגיל.',
   EMAIL_TAKEN: 'האימייל כבר משויך למשתמש אחר.',
@@ -14,13 +15,15 @@ const errorMessages = {
   INVALID_CURRENT_PASSWORD: 'הסיסמה הנוכחית שגויה.',
   INVALID_EMAIL: 'כתובת האימייל אינה תקינה.',
   INVALID_INVITE: 'קוד המשפחה אינו תקין.',
-  INVALID_FAMILY_CODE: 'קוד המשפחה חייב להכיל 4 עד 12 אותיות באנגלית או ספרות.',
+  INVALID_FAMILY_CODE: 'קוד המשפחה חייב להכיל בדיוק 4 אותיות באנגלית או ספרות.',
   INVITE_TAKEN: 'קוד המשפחה כבר בשימוש. בחרו קוד אחר.',
   INVALID_ROLE: 'יש לבחור סוג משתמש.',
   INVALID_FAMILY_SURNAME: 'יש להזין שם משפחה תקין.',
   INVALID_USERNAME: 'שם המשתמש חייב להכיל 2 עד 40 תווים.',
+  PROTECTED_ADMIN: 'לא ניתן למחוק חשבון מנהל מוגן.',
   SESSION_EXPIRED: 'החיבור פג. יש להתחבר מחדש.',
   USERNAME_TAKEN: 'שם המשתמש כבר קיים.',
+  USER_NOT_FOUND: 'המשתמש לא נמצא או שכבר נמחק.',
   WEAK_PASSWORD: 'הסיסמה חייבת להכיל לפחות 8 תווים.',
 }
 
@@ -62,6 +65,17 @@ export async function changePassword(session, currentPassword, newPassword) {
   if (error) return { error: userErrorMessage(error) }
   if (!data || data.error) return { error: errorMessages[data?.error] || 'לא ניתן לשנות את הסיסמה.' }
   return { success: true }
+}
+
+export async function deleteOwnAccount(session, password) {
+  const { data, error } = await supabase.rpc('delete_own_app_account', {
+    p_session_token: session.token,
+    p_password: password,
+  })
+  if (error) return { error: userErrorMessage(error) }
+  if (!data || data.error) return { error: errorMessages[data?.error] || 'לא ניתן למחוק את החשבון.' }
+  localStorage.removeItem(STORAGE_KEY)
+  return { success: true, familyTransferredTo: data.family_transferred_to || null }
 }
 
 export function saveSession(session) {

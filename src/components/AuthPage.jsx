@@ -15,6 +15,8 @@ export default function AuthPage({ existingSession = null, onLogin }) {
 
   const isRegister = mode === 'register'
   const isSetup = mode === 'setup'
+  const cleanFamilyName = familyName.trim()
+  const validFamilyName = /^[\p{L}\p{M}][\p{L}\p{M}'׳״ -]{0,59}$/u.test(cleanFamilyName)
 
   async function handleSubmit(event) {
     event.preventDefault()
@@ -40,10 +42,10 @@ export default function AuthPage({ existingSession = null, onLogin }) {
     onLogin(result.session)
   }
 
-  const valid = username.trim()
+  const valid = username.trim().length >= 2 && username.trim().length <= 40
     && password.length >= (isRegister || isSetup ? 8 : 1)
     && (!isRegister && !isSetup || (email.trim() && confirmPassword.length >= 8))
-    && (!isRegister || (/^[A-Z0-9]{4,12}$/.test(inviteCode) && (role !== 'owner' || familyName.trim())))
+    && (!isRegister || (/^[A-Z0-9]{4}$/.test(inviteCode) && (role !== 'owner' || validFamilyName)))
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-slate-950 px-4 py-8 text-white">
@@ -63,6 +65,7 @@ export default function AuthPage({ existingSession = null, onLogin }) {
               autoFocus={!isSetup}
               className={inputClass}
               disabled={isSetup}
+              maxLength="40"
               onChange={(event) => setUsername(event.target.value)}
               placeholder="שם משתמש"
               value={username}
@@ -75,6 +78,7 @@ export default function AuthPage({ existingSession = null, onLogin }) {
                 autoComplete="email"
                 className={inputClass}
                 disabled={isSetup && existingSession?.is_admin}
+                maxLength="254"
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="name@example.com"
                 type="email"
@@ -120,7 +124,7 @@ export default function AuthPage({ existingSession = null, onLogin }) {
               {role === 'owner' ? (
                 <>
                   <Field label="שם המשפחה">
-                    <input className={inputClass} onChange={(event) => setFamilyName(event.target.value)} placeholder="לדוגמה: כהן" value={familyName} />
+                    <input className={inputClass} maxLength="60" onChange={(event) => setFamilyName(event.target.value)} placeholder="לדוגמה: כהן" value={familyName} />
                   </Field>
                   <FamilyCodeField inviteCode={inviteCode} label="בחרו קוד משפחה" setInviteCode={setInviteCode} />
                 </>
@@ -178,7 +182,7 @@ function RoleButton({ active, label, onClick }) {
 function FamilyCodeField({ inviteCode, label = 'קוד משפחה', setInviteCode }) {
   return (
     <Field label={label}>
-      <input className={`${inputClass} uppercase`} dir="ltr" maxLength="12" onChange={(event) => setInviteCode(event.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase())} placeholder="1111" value={inviteCode} />
+      <input className={`${inputClass} uppercase`} dir="ltr" maxLength="4" onChange={(event) => setInviteCode(event.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase())} placeholder="1111" value={inviteCode} />
     </Field>
   )
 }

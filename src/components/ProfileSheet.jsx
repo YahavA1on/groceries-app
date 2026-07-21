@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { changePassword, updateProfile } from '../lib/auth'
+import { changePassword, deleteOwnAccount, updateProfile } from '../lib/auth'
 import PushNotificationSettings from './PushNotificationSettings'
 
 const FAMILY_PREFIX = 'הבית של משפחת '
@@ -18,6 +18,9 @@ export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionC
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordBusy, setPasswordBusy] = useState(false)
   const [passwordMessage, setPasswordMessage] = useState('')
+  const [deletePassword, setDeletePassword] = useState('')
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteMessage, setDeleteMessage] = useState('')
 
   async function saveProfile(event) {
     event.preventDefault()
@@ -52,6 +55,20 @@ export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionC
     setNewPassword('')
     setConfirmPassword('')
     setPasswordMessage('הסיסמה שונתה. חיבורים במכשירים אחרים נותקו.')
+  }
+
+  async function deleteAccount(event) {
+    event.preventDefault()
+    setDeleteMessage('')
+    if (!window.confirm('מחיקת החשבון היא קבועה. אם זה חשבון ניהול הבית, הניהול יעבור לבן המשפחה הוותיק הבא. להמשיך?')) return
+    setDeleteBusy(true)
+    const result = await deleteOwnAccount(session, deletePassword)
+    setDeleteBusy(false)
+    if (result.error) {
+      setDeleteMessage(result.error)
+      return
+    }
+    await onLogout()
   }
 
   return (
@@ -98,7 +115,21 @@ export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionC
           <button className={primaryButton} disabled={passwordBusy || !currentPassword || newPassword.length < 8 || confirmPassword.length < 8} type="submit">{passwordBusy ? 'משנה...' : 'שינוי סיסמה'}</button>
         </form>
 
-        {session.family_id && !session.is_system_admin ? <PushNotificationSettings session={session} /> : null}
+        {session.family_id && (!session.is_system_admin || session.family_id === session.home_family_id) ? <PushNotificationSettings session={session} /> : null}
+
+        <section className="mt-3 rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-500/30 dark:bg-red-500/10">
+          <h3 className="font-black text-red-800 dark:text-red-200">מחיקת החשבון</h3>
+          {session.is_system_admin ? (
+            <p className="mt-2 text-sm font-bold text-red-700 dark:text-red-200">חשבון מנהל המערכת מוגן ואי אפשר למחוק אותו מכאן.</p>
+          ) : (
+            <form className="mt-3 space-y-3" onSubmit={deleteAccount}>
+              <p className="text-xs text-red-700 dark:text-red-200">החשבון, החיבורים והפרטים האישיים יימחקו. יש להזין את הסיסמה הנוכחית לאישור.</p>
+              <input autoComplete="current-password" className={inputClass} onChange={(event) => setDeletePassword(event.target.value)} placeholder="סיסמה נוכחית" type="password" value={deletePassword} />
+              <Message text={deleteMessage} />
+              <button className="h-11 w-full rounded-xl bg-red-700 font-black text-white disabled:opacity-50" disabled={deleteBusy || !deletePassword} type="submit">{deleteBusy ? 'מוחק...' : 'מחיקת החשבון לצמיתות'}</button>
+            </form>
+          )}
+        </section>
 
         <button className="mt-4 h-12 w-full rounded-xl bg-rose-100 font-black text-rose-800 dark:bg-rose-500/20 dark:text-rose-100" onClick={onLogout} type="button">יציאה מהחשבון</button>
       </section>
