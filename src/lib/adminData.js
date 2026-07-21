@@ -22,3 +22,11 @@ export async function fetchAdminDashboard(session, familyId = null) {
     error,
   }
 }
+
+export async function selectAdminFamily(session, familyId = null) {
+  const { data, error } = await supabase.rpc('admin_select_family_context', {
+    p_session_token: session.token,
+    p_family_id: familyId || null,
+  })
+  return { data, error }
+}

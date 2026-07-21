@@ -26,6 +26,13 @@ const shopperTabs = [
 ]
 
 const adminTab = { key: 'admin', label: 'ניהול' }
+const systemAdminFamilyTabs = [
+  { key: 'fulfillment', label: 'קנייה' },
+  { key: 'catalog', label: 'הוספה' },
+  { key: 'my', label: 'רשימה' },
+  { key: 'inventory', label: 'מלאי' },
+  adminTab,
+]
 
 export default function App() {
   const [initialSession] = useState(() => getCurrentSession())
@@ -90,8 +97,10 @@ export default function App() {
 function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange, onToggleTheme, session }) {
   const { count } = useCart()
   const householdTabs = session.role === 'shopper' ? shopperTabs : ownerTabs
-  const tabs = session.is_admin
-    ? session.family_id ? [...householdTabs, adminTab] : [adminTab]
+  const tabs = session.is_system_admin
+    ? session.family_id ? systemAdminFamilyTabs : [adminTab]
+    : session.is_admin
+      ? [...householdTabs, adminTab]
     : householdTabs
   const [familyDetails, setFamilyDetails] = useState(null)
   const [profileOpen, setProfileOpen] = useState(false)
@@ -108,13 +117,13 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
   }, [session.family_id, session.family_name, session.token])
 
   const page = useMemo(() => {
-    if (activeTab === 'admin' && session.is_admin) return <AdminPage session={session} />
+    if (activeTab === 'admin' && session.is_admin) return <AdminPage onSessionChange={onSessionChange} session={session} />
     if (activeTab === 'my') return <MyRequestsPage session={session} />
     if (activeTab === 'fulfillment') return <FulfillmentPage session={session} />
     if (activeTab === 'inventory') return <InventoryPage session={session} />
     if (activeTab === 'receipt') return <ReceiptImportPage session={session} />
     return <CatalogPage session={session} onSubmitted={() => onTabChange('my')} />
-  }, [activeTab, onTabChange, session])
+  }, [activeTab, onSessionChange, onTabChange, session])
 
   return (
     <div className="min-h-dvh bg-orange-50 pb-28 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
@@ -166,7 +175,7 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
 
       <nav aria-label="Main navigation">
         <div className="fixed inset-x-0 bottom-0 z-50 border-t border-rose-100 bg-orange-50/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
-          <div className={`mx-auto grid max-w-md gap-2 ${tabs.length === 1 ? 'grid-cols-1' : tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+          <div className={`mx-auto grid max-w-md gap-2 ${tabs.length === 1 ? 'grid-cols-1' : tabs.length === 5 ? 'grid-cols-5' : tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
             {tabs.map((tab) => (
               <button
                 className={`relative rounded-2xl px-2 py-3 text-sm font-black transition active:scale-[0.98] ${
@@ -197,12 +206,13 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
           session={session}
         />
       ) : null}
-      {session.family_id ? <PushNotificationPrompt session={session} /> : null}
+      {session.family_id && !session.is_system_admin ? <PushNotificationPrompt session={session} /> : null}
     </div>
   )
 }
 
 function defaultTab(session) {
+  if (session?.is_system_admin) return 'admin'
   if (session?.is_admin && !session?.family_id) return 'admin'
   return session?.role === 'shopper' ? 'fulfillment' : 'catalog'
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import TopNotice from './TopNotice'
-import { fetchAdminDashboard } from '../lib/adminData'
+import { fetchAdminDashboard, selectAdminFamily } from '../lib/adminData'
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
 import { userErrorMessage } from '../lib/userErrors'
 
@@ -12,12 +12,14 @@ const activityTypes = [
   { key: 'catalog', label: 'מוצרים' },
 ]
 
-export default function AdminPage({ session }) {
+export default function AdminPage({ onSessionChange, session }) {
   const [summary, setSummary] = useState({})
   const [families, setFamilies] = useState([])
   const [activity, setActivity] = useState([])
   const [familyId, setFamilyId] = useState('')
   const [activityType, setActivityType] = useState('all')
+  const [viewFamilyId, setViewFamilyId] = useState(session.family_id || '')
+  const [switchingFamily, setSwitchingFamily] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -48,6 +50,18 @@ export default function AdminPage({ session }) {
     [activity, activityType]
   )
 
+  async function changeFamilyView(nextFamilyId) {
+    setSwitchingFamily(true)
+    const result = await selectAdminFamily(session, nextFamilyId)
+    setSwitchingFamily(false)
+    if (result.error) {
+      setError(userErrorMessage(result.error))
+      return
+    }
+    setViewFamilyId(nextFamilyId || '')
+    onSessionChange(result.data)
+  }
+
   return (
     <section className="space-y-4">
       <TopNotice notice={error ? { tone: 'error', text: error } : null} onDismiss={() => setError('')} />
@@ -70,6 +84,21 @@ export default function AdminPage({ session }) {
             <MetricCard label="בקשות פתוחות" value={summary.pending_requests} tone="amber" />
             <MetricCard label="פעילים היום" value={summary.active_users_24h} tone="emerald" />
           </div>
+
+          {session.is_system_admin ? (
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm dark:border-indigo-500/30 dark:bg-indigo-500/10">
+              <h3 className="font-black text-indigo-950 dark:text-indigo-100">תצוגת אתר מלאה</h3>
+              <p className="mt-1 text-xs text-indigo-700 dark:text-indigo-200">בחרו משפחה כדי לפתוח את כל עמודי האתר כמנהל מערכת.</p>
+              <div className="mt-3 flex gap-2">
+                <select className="h-11 min-w-0 flex-1 rounded-xl border border-indigo-200 bg-white px-3 text-sm font-bold outline-none dark:border-slate-700 dark:bg-slate-900" disabled={switchingFamily} onChange={(event) => setViewFamilyId(event.target.value)} value={viewFamilyId}>
+                  <option value="">תצוגה כללית</option>
+                  {families.map((family) => <option key={family.family_id} value={family.family_id}>{family.family_name}</option>)}
+                </select>
+                <button className="h-11 shrink-0 rounded-xl bg-indigo-950 px-4 text-sm font-black text-white disabled:opacity-50 dark:bg-cyan-400 dark:text-slate-950" disabled={switchingFamily || viewFamilyId === (session.family_id || '')} onClick={() => changeFamilyView(viewFamilyId)} type="button">{switchingFamily ? 'עובר...' : viewFamilyId ? 'פתיחה' : 'יציאה'}</button>
+              </div>
+              {session.family_id ? <p className="mt-2 text-xs font-bold text-emerald-700 dark:text-emerald-300">מציג כעת: {session.family_name}. עמודי האתר המלאים זמינים בתפריט התחתון.</p> : null}
+            </div>
+          ) : null}
 
           <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
             <div className="flex items-center justify-between gap-3">

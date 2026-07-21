@@ -120,7 +120,7 @@ export default function AuthPage({ existingSession = null, onLogin }) {
               {role === 'owner' ? (
                 <>
                   <Field label="שם המשפחה">
-                    <input className={inputClass} onChange={(event) => setFamilyName(event.target.value)} placeholder="לדוגמה: אלון" value={familyName} />
+                    <input className={inputClass} onChange={(event) => setFamilyName(event.target.value)} placeholder="לדוגמה: כהן" value={familyName} />
                   </Field>
                   <FamilyCodeField inviteCode={inviteCode} label="בחרו קוד משפחה" setInviteCode={setInviteCode} />
                 </>
@@ -178,7 +178,7 @@ function RoleButton({ active, label, onClick }) {
 function FamilyCodeField({ inviteCode, label = 'קוד משפחה', setInviteCode }) {
   return (
     <Field label={label}>
-      <input className={`${inputClass} uppercase`} dir="ltr" maxLength="12" onChange={(event) => setInviteCode(event.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase())} placeholder="1234" value={inviteCode} />
+      <input className={`${inputClass} uppercase`} dir="ltr" maxLength="12" onChange={(event) => setInviteCode(event.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase())} placeholder="1111" value={inviteCode} />
     </Field>
   )
 }

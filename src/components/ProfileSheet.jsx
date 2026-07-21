@@ -73,7 +73,7 @@ export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionC
           {canRenameFamily ? (
             <>
               <Field label="שם המשפחה">
-                <input className={inputClass} maxLength="60" onChange={(event) => setFamilySurname(event.target.value)} placeholder="לדוגמה: אלון" value={familySurname} />
+                <input className={inputClass} maxLength="60" onChange={(event) => setFamilySurname(event.target.value)} placeholder="לדוגמה: כהן" value={familySurname} />
                 <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">יוצג כ״הבית של משפחת {familySurname || '...'}״ לכל בני הבית.</span>
               </Field>
               {familyCode ? (
@@ -98,7 +98,7 @@ export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionC
           <button className={primaryButton} disabled={passwordBusy || !currentPassword || newPassword.length < 8 || confirmPassword.length < 8} type="submit">{passwordBusy ? 'משנה...' : 'שינוי סיסמה'}</button>
         </form>
 
-        {session.family_id ? <PushNotificationSettings session={session} /> : null}
+        {session.family_id && !session.is_system_admin ? <PushNotificationSettings session={session} /> : null}
 
         <button className="mt-4 h-12 w-full rounded-xl bg-rose-100 font-black text-rose-800 dark:bg-rose-500/20 dark:text-rose-100" onClick={onLogout} type="button">יציאה מהחשבון</button>
       </section>

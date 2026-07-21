@@ -134,6 +134,7 @@ function normalizeSession(session) {
   return {
     ...session,
     is_admin: Boolean(session.is_admin),
+    is_system_admin: Boolean(session.is_system_admin),
     shops_for_user_id: session.role === 'shopper' ? session.owner_id : null,
   }
 }
