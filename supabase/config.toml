@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.send-push]
 verify_jwt = false
+
+[functions.recipe-suggestions]
+verify_jwt = false

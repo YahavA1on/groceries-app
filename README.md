@@ -32,6 +32,22 @@ GitHub Pages cannot run the local Vite API middleware. Deploy the restricted Sup
 npx supabase functions deploy receipt-proxy --project-ref erfkngpyauhibcjfsszx --no-verify-jwt
 ```
 
+## Hebrew recipe suggestions
+
+The recipes page searches Hebrew Google recipe results through SerpApi, reads the
+source page's structured recipe data, and uses Gemini to match exact ingredient
+amounts to the household inventory.
+
+Configure the private SerpApi key and deploy the function:
+
+```powershell
+npx supabase secrets set SERPAPI_KEY=your-key --project-ref erfkngpyauhibcjfsszx
+npx supabase functions deploy recipe-suggestions --project-ref erfkngpyauhibcjfsszx --no-verify-jwt
+```
+
+Run `supabase/migrations/20260721280000_add_inventory_recipes.sql` in the
+Supabase SQL Editor before opening the recipes page.
+
 The function only accepts requests from this app's GitHub Pages origin or local development and only proxies the Rami Levy receipt and catalog services.
 
 ### Gemini product normalization

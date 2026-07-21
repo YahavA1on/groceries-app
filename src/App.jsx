@@ -9,6 +9,7 @@ import MyRequestsPage from './components/MyRequestsPage'
 import PushNotificationPrompt from './components/PushNotificationPrompt'
 import ProfileSheet from './components/ProfileSheet'
 import ReceiptImportPage from './components/ReceiptImportPage'
+import RecipesPage from './components/RecipesPage'
 import { getCurrentSession, logout, refreshCurrentSession, saveSession } from './lib/auth'
 import { useCart } from './hooks/useCart'
 import { supabase } from './lib/supabase'
@@ -16,12 +17,14 @@ import { supabase } from './lib/supabase'
 const ownerTabs = [
   { key: 'catalog', label: 'הוספה' },
   { key: 'my', label: 'רשימה' },
+  { key: 'recipes', label: 'מתכונים' },
   { key: 'inventory', label: 'מלאי' },
 ]
 
 const shopperTabs = [
   { key: 'fulfillment', label: 'קנייה' },
   { key: 'catalog', label: 'הוספה' },
+  { key: 'recipes', label: 'מתכונים' },
   { key: 'inventory', label: 'מלאי' },
 ]
 
@@ -29,6 +32,7 @@ const adminTab = { key: 'admin', label: 'ניהול' }
 const systemAdminFamilyTabs = [
   { key: 'catalog', label: 'הוספה' },
   { key: 'my', label: 'רשימה' },
+  { key: 'recipes', label: 'מתכונים' },
   { key: 'inventory', label: 'מלאי' },
   adminTab,
 ]
@@ -120,6 +124,7 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
     if (activeTab === 'my') return <MyRequestsPage session={session} />
     if (activeTab === 'fulfillment') return <FulfillmentPage session={session} />
     if (activeTab === 'inventory') return <InventoryPage session={session} />
+    if (activeTab === 'recipes') return <RecipesPage session={session} />
     if (activeTab === 'receipt') return <ReceiptImportPage session={session} />
     return <CatalogPage session={session} onSubmitted={() => onTabChange('my')} />
   }, [activeTab, onSessionChange, onTabChange, session])
