@@ -297,8 +297,8 @@ function EmptyState({ text }) {
 
 function WeightEditSheet({ busy, item, onCancel, onSubmit, onValueChange, value }) {
   return (
-    <div className="fixed inset-0 z-[75] flex items-end bg-slate-950/60 p-3 sm:items-center sm:justify-center">
-      <form className="w-full rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900 sm:max-w-md" onSubmit={onSubmit}>
+    <div className="app-modal-overlay bg-slate-950/60">
+      <form className="app-modal-panel rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900" onSubmit={onSubmit}>
         <h3 className="text-xl font-black">שינוי משקל</h3>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{item.food?.name}</p>
         <label className="mt-4 block">

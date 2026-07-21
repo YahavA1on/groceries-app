@@ -3,6 +3,14 @@
 @utility admin-edit-input {
   @apply h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-indigo-500 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:focus:border-cyan-400;
 }
+
+@utility app-modal-overlay {
+  @apply fixed inset-0 z-[90] flex items-center justify-center overflow-y-auto p-4;
+}
+
+@utility app-modal-panel {
+  @apply my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto;
+}
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {

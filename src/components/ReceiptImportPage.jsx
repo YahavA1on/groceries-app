@@ -227,8 +227,8 @@ function ReceiptQrScanner({ onClose, onDetected }) {
   }, [onDetected])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4" role="dialog" aria-modal="true" aria-label="סריקת קוד QR">
-      <div className="w-full max-w-md rounded-3xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+    <div className="app-modal-overlay bg-slate-950/85" role="dialog" aria-modal="true" aria-label="סריקת קוד QR">
+      <div className="app-modal-panel rounded-3xl bg-white p-4 shadow-2xl dark:bg-slate-900">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-xl font-black">סריקת QR</h3>

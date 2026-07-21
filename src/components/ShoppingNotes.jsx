@@ -168,8 +168,8 @@ export default function ShoppingNotes({ session }) {
       {error ? <p className="mt-2 text-xs font-bold text-red-600 dark:text-red-300">{error}</p> : null}
 
       {choosingVisibility ? (
-        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/55 p-4 sm:items-center">
-          <div className="w-full max-w-md rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+        <div className="app-modal-overlay bg-slate-950/55">
+          <div className="app-modal-panel rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
             <h3 className="text-xl font-black">למי לשמור?</h3>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">הערה פרטית נשמרת רק במכשיר הזה.</p>
             <div className="mt-4 grid grid-cols-2 gap-2">

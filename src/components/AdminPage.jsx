@@ -304,8 +304,8 @@ function UserEditor({ families, onCancel, onChange, onSubmit, saving, user }) {
   const protectedMembership = user.is_system_admin
   const update = (field, value) => onChange((current) => ({ ...current, [field]: value }))
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 p-3 sm:items-center" dir="rtl">
-      <form className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-900" onSubmit={onSubmit}>
+    <div className="app-modal-overlay bg-slate-950/60" dir="rtl">
+      <form className="app-modal-panel rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-900" onSubmit={onSubmit}>
         <div className="flex items-start justify-between gap-3">
           <div><h3 className="text-xl font-black">עריכת משתמש</h3><p className="text-xs text-slate-500 dark:text-slate-400">אפשר לערוך פרטים ולהעביר את המשתמש למשפחה אחרת.</p></div>
           <button className="rounded-full bg-slate-100 px-3 py-2 font-black dark:bg-slate-800" onClick={onCancel} type="button">✕</button>

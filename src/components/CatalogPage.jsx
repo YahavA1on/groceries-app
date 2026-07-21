@@ -606,8 +606,8 @@ function EditFoodSheet({ busy, categoryOptions, food, onDelete, onRequestClose, 
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4">
-      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+    <div className="app-modal-overlay bg-slate-950/55">
+      <div className="app-modal-panel rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-xl font-black">עריכת מוצר</h3>
@@ -741,8 +741,8 @@ function FoodDetailsSheet({ busy, categoryOptions, onClose, onSave, onValuesChan
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4">
-      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+    <div className="app-modal-overlay bg-slate-950/55">
+      <div className="app-modal-panel rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h3 className="text-xl font-black">{title}</h3>
           <button className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 font-black dark:bg-slate-800" disabled={busy} onClick={onClose} type="button">×</button>
@@ -798,8 +798,8 @@ function ensureCategoryOption(options, value) {
 
 function UnsavedChangesSheet({ onCancel, onConfirm }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/65 p-4">
-      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+    <div className="app-modal-overlay bg-slate-950/65">
+      <div className="app-modal-panel rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
         <h3 className="text-xl font-black">יש שינויים שלא נשמרו</h3>
         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">לבטל את העריכה בלי לשמור?</p>
         <div className="mt-4 grid grid-cols-2 gap-2">
@@ -879,8 +879,8 @@ function EmptyState({ text }) {
 
 function ConfirmSheet({ action, busy, onCancel, onConfirm }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4">
-      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-auto rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
+    <div className="app-modal-overlay bg-slate-950/55">
+      <div className="app-modal-panel rounded-2xl bg-white p-4 shadow-2xl dark:bg-slate-900">
         <h3 className="text-xl font-black">{action.title}</h3>
         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{action.message}</p>
         <div className="mt-4 grid grid-cols-2 gap-2">

@@ -72,8 +72,8 @@ export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionC
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-end bg-slate-950/60 sm:items-center sm:justify-center" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section aria-label="פרופיל" className="max-h-[92dvh] w-full overflow-y-auto rounded-t-[1.75rem] bg-orange-50 p-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] text-slate-950 shadow-2xl dark:bg-slate-900 dark:text-white sm:max-w-md sm:rounded-[1.75rem]">
+    <div className="app-modal-overlay bg-slate-950/60" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section aria-label="פרופיל" className="app-modal-panel rounded-[1.75rem] bg-orange-50 p-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] text-slate-950 shadow-2xl dark:bg-slate-900 dark:text-white">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <p className="text-sm font-black text-rose-700 dark:text-cyan-300">החשבון שלי</p>
