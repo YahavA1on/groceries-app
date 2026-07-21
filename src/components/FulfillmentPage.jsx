@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
+import { FamilyRatingPicker, FamilyRatingSummary } from './FamilyRatingView'
 import ShoppingNotes from './ShoppingNotes'
 import TopNotice from './TopNotice'
-import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchRatingsByOwner, fetchShoppingListItems, finishFamilyShopping, setShoppingItemCart, updateFoodUnitQuantity } from '../lib/foodData'
+import { useFamilyRatings } from '../hooks/useFamilyRatings'
+import { DEFAULT_MANUFACTURER, fetchShoppingListItems, finishFamilyShopping, setShoppingItemCart, updateFoodUnitQuantity } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRatingMood } from '../lib/foodFilters'
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
 import { sendPushEvent } from '../lib/pushNotifications'
@@ -10,8 +12,6 @@ import { userErrorMessage } from '../lib/userErrors'
 
 export default function FulfillmentPage({ session }) {
   const [items, setItems] = useState([])
-  const [ratings, setRatings] = useState({})
-  const [ownerName, setOwnerName] = useState('')
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState(ALL_CATEGORIES)
@@ -28,10 +28,7 @@ export default function FulfillmentPage({ session }) {
   const loadItems = useCallback(async () => {
     setError('')
 
-    const [listRes, ratingsRes] = await Promise.all([
-      fetchShoppingListItems(session),
-      fetchRatingsByOwner(session),
-    ])
+    const listRes = await fetchShoppingListItems(session)
 
     if (listRes.error) {
       setError(userErrorMessage(listRes.error))
@@ -40,11 +37,6 @@ export default function FulfillmentPage({ session }) {
       replaceStateWhenChanged(setItems, listRes.data || [])
     }
 
-    setOwnerName(session.family_name || '')
-    if (!ratingsRes.error) {
-      const foods = (listRes.data || []).map((item) => item.food).filter(Boolean)
-      replaceStateWhenChanged(setRatings, applyRelatedRatings(foods, ratingsRes.data, ratingsRes.rows))
-    }
     setLoading(false)
   }, [session])
 
@@ -58,6 +50,8 @@ export default function FulfillmentPage({ session }) {
   }, [loadItems])
 
   const categoryOptions = useMemo(() => buildCategoryOptions(items.map((item) => item.food).filter(Boolean)), [items])
+  const ratingFoods = useMemo(() => items.map((item) => item.food).filter(Boolean), [items])
+  const { allSelected, commonGroundFoodIds, detailsByFood, members, ratings, selectedMemberId, setSelectedMemberId } = useFamilyRatings(session, ratingFoods)
   const filteredItems = useMemo(() => filterFoodRows(items, { category, search }), [category, items, search])
   const pending = filteredItems.filter((item) => !item.in_cart)
   const cartItems = filteredItems.filter((item) => item.in_cart)
@@ -147,11 +141,13 @@ export default function FulfillmentPage({ session }) {
       />
 
       <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
-        <h2 className="text-2xl font-black">קניות עבור {ownerName || 'הבעלים'}</h2>
+        <h2 className="text-2xl font-black">קניות למשפחה</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">העבירו פריטים לעגלה ואז סיימו את הקניה.</p>
       </div>
 
       <ShoppingNotes session={session} />
+
+      <FamilyRatingPicker members={members} onChange={setSelectedMemberId} selectedMemberId={selectedMemberId} />
 
       <FoodFilterBar
         category={category}
@@ -170,14 +166,17 @@ export default function FulfillmentPage({ session }) {
         <EmptyState text="אין פריטים שמתאימים לסינון הזה." />
       ) : (
         <>
-          <ItemSection emptyText="אין פריטים ממתינים." items={pending} onAction={(item) => setInCart(item, true)} onEditWeight={openWeightEditor} pinned ratings={ratings} savingId={savingId} title="מבוקשים" />
+          <ItemSection allRatings={allSelected} commonGroundFoodIds={commonGroundFoodIds} emptyText="אין פריטים ממתינים." items={pending} onAction={(item) => setInCart(item, true)} onEditWeight={openWeightEditor} pinned ratingDetails={detailsByFood} ratings={ratings} savingId={savingId} title="מבוקשים" />
           <ItemSection
             actionLabel="החזרה"
+            allRatings={allSelected}
+            commonGroundFoodIds={commonGroundFoodIds}
             emptyText="העגלה ריקה."
             inCart
             items={cartItems}
             onAction={(item) => setInCart(item, false)}
             onEditWeight={openWeightEditor}
+            ratingDetails={detailsByFood}
             ratings={ratings}
             savingId={savingId}
             title="בעגלה"
@@ -218,7 +217,7 @@ export default function FulfillmentPage({ session }) {
   )
 }
 
-function ItemSection({ actionLabel = 'הוספה', emptyText, inCart = false, items, onAction, onEditWeight, pinned = false, ratings, savingId, title }) {
+function ItemSection({ actionLabel = 'הוספה', allRatings, commonGroundFoodIds, emptyText, inCart = false, items, onAction, onEditWeight, pinned = false, ratingDetails, ratings, savingId, title }) {
   const groups = groupRowsByRatingMood(items, ratings)
 
   return (
@@ -235,9 +234,10 @@ function ItemSection({ actionLabel = 'הוספה', emptyText, inCart = false, it
             <div className="space-y-2" key={categoryGroup.key}>
               <CategorySubheading count={categoryGroup.items.length} title={categoryGroup.title} />
               {categoryGroup.items.map((item) => (
-                <article className={`flex items-center gap-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ${group.ring} dark:bg-slate-900 ${inCart ? 'outline outline-2 outline-cyan-300' : ''}`} key={item.id}>
-                  <FoodThumb food={item.food} />
-                  <div className="min-w-0 flex-1">
+                <article className={`rounded-2xl bg-white p-3 shadow-sm ring-1 ${commonGroundFoodIds.has(item.food_id) ? 'ring-2 ring-emerald-400' : group.ring} dark:bg-slate-900 ${inCart ? 'outline outline-2 outline-cyan-300' : ''}`} key={item.id}>
+                  <div className="flex items-center gap-3">
+                    <FoodThumb food={item.food} />
+                    <div className="min-w-0 flex-1">
                     <h4 className="line-clamp-2 font-black leading-tight">{item.food?.name || 'מוצר שנמחק'}</h4>
                     <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{item.food?.manufacturer || DEFAULT_MANUFACTURER}</p>
                     <div className="mt-1 flex items-center gap-2">
@@ -248,9 +248,9 @@ function ItemSection({ actionLabel = 'הוספה', emptyText, inCart = false, it
                       <span className={`rounded-lg px-2 py-1 ${group.badge}`}>{group.title}</span>
                       <span className="rounded-lg bg-slate-100 px-2 py-1 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{getFoodCategoryLabel(item.food)}</span>
                     </div>
-                  </div>
-                  <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-black dark:bg-slate-800">x{item.quantity}</span>
-                  <button
+                    </div>
+                    <span className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-black dark:bg-slate-800">x{item.quantity}</span>
+                    <button
                     className={`h-11 rounded-xl px-4 font-black disabled:opacity-50 ${
                       inCart ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200' : 'bg-rose-600 text-white'
                     }`}
@@ -259,7 +259,9 @@ function ItemSection({ actionLabel = 'הוספה', emptyText, inCart = false, it
                     type="button"
                   >
                     {actionLabel}
-                  </button>
+                    </button>
+                  </div>
+                  <FamilyRatingSummary commonGround={commonGroundFoodIds.has(item.food_id)} details={ratingDetails[item.food_id] || []} visible={allRatings} />
                 </article>
               ))}
             </div>

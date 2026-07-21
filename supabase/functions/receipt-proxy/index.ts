@@ -67,8 +67,15 @@ async function fetchReceipt(value: unknown, corsHeaders: HeadersInit) {
 
   const bridgeUrl = Deno.env.get('RECEIPT_BRIDGE_URL')?.trim()
   const bridgeSecret = Deno.env.get('RECEIPT_BRIDGE_SECRET')?.trim()
+  let bridgeUnavailable = false
   if (bridgeUrl && bridgeSecret) {
-    return fetchReceiptFromBridge(receiptUrl, bridgeUrl, bridgeSecret, corsHeaders)
+    try {
+      const bridgeResponse = await fetchReceiptFromBridge(receiptUrl, bridgeUrl, bridgeSecret, corsHeaders)
+      if (bridgeResponse.ok) return bridgeResponse
+      bridgeUnavailable = true
+    } catch {
+      bridgeUnavailable = true
+    }
   }
 
   // Restore the original production scraper from 7b745f9. Rami Levy accepted
@@ -88,6 +95,10 @@ async function fetchReceipt(value: unknown, corsHeaders: HeadersInit) {
   const text = await upstream.text()
   if (new TextEncoder().encode(text).byteLength > MAX_RECEIPT_BYTES) {
     return response('Receipt response is too large', 413, corsHeaders)
+  }
+
+  if (bridgeUnavailable && !upstream.ok) {
+    return response('Receipt service is temporarily unavailable', 503, corsHeaders)
   }
 
   return new Response(text, {

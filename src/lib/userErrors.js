@@ -7,6 +7,7 @@ const knownMessages = [
   [/note must contain/i, 'ההערה חייבת להכיל בין 1 ל־300 תווים.'],
   [/invalid push endpoint|invalid push keys/i, 'לא ניתן להפעיל התראות במכשיר הזה.'],
   [/failed to fetch|networkerror|network request failed/i, 'אין כרגע חיבור לשרת. בדקו את החיבור לאינטרנט ונסו שוב.'],
+  [/error sending request for url|name or service not known|failed to lookup address information|receipt bridge|receipt service is temporarily unavailable/i, 'שירות סריקת הקבלות אינו זמין כרגע. נסו שוב בעוד כמה דקות.'],
 ]
 
 const knownCodes = {

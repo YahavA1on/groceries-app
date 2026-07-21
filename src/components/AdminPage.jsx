@@ -130,7 +130,7 @@ export default function AdminPage({ onSessionChange, session }) {
         ACCOUNT_EXISTS: 'שם המשתמש או האימייל כבר קיימים.',
         FAMILY_NOT_FOUND: 'המשפחה שנבחרה אינה קיימת.',
         LAST_FAMILY_MEMBER: 'אי אפשר להוציא את החבר האחרון. יש למחוק את המשפחה במקום.',
-        LAST_FAMILY_MANAGER: 'אי אפשר להפוך את מנהל הבית היחיד לקונה. יש למנות קודם מנהל נוסף.',
+        LAST_FAMILY_MANAGER: 'אי אפשר להפוך את בן הבית האחראי היחיד לקונה. יש למנות קודם בן בית נוסף.',
         PROTECTED_ADMIN_MEMBERSHIP: 'אי אפשר לשנות את המשפחה או התפקיד של מנהל המערכת.',
       }
       setError(messages[result.data.error] || 'לא ניתן לעדכן את המשתמש.')
@@ -262,7 +262,7 @@ export default function AdminPage({ onSessionChange, session }) {
                       <td className="p-3 font-black">{user.username}{user.is_admin ? <span className="me-2 rounded bg-violet-100 px-2 py-1 text-[0.65rem] text-violet-800 dark:bg-violet-400/20 dark:text-violet-200">מנהל</span> : null}</td>
                       <td className="p-3" dir="ltr">{user.email || '—'}</td>
                       <td className="p-3">{user.family_name || 'ללא משפחה'}</td>
-                      <td className="p-3">{user.member_role === 'manager' ? 'ניהול הבית' : user.app_role === 'shopper' ? 'קונה' : 'ללא שיוך'}</td>
+                      <td className="p-3">{user.member_role === 'manager' ? 'בן בית' : user.app_role === 'shopper' ? 'קונה' : 'ללא שיוך'}</td>
                       <td className="p-3">{user.last_login_at ? relativeTime(user.last_login_at) : 'לא ידוע'}</td>
                       <td className="p-3">{user.active_sessions}</td>
                       <td className="p-3">
@@ -334,7 +334,7 @@ function UserEditor({ families, onCancel, onChange, onSubmit, saving, user }) {
           </AdminField>
           <AdminField label="תפקיד">
             <select className="admin-edit-input" disabled={protectedMembership} onChange={(event) => update('app_role', event.target.value)} value={user.app_role}>
-              <option value="owner">ניהול הבית</option>
+              <option value="owner">בן בית</option>
               <option value="shopper">קונה</option>
             </select>
           </AdminField>
@@ -397,7 +397,7 @@ function activityMeta(item) {
     users: { icon: '👤', title: updated ? 'חשבון עודכן' : 'משתמש חדש נרשם', detail: detail.username, color: 'bg-violet-100 dark:bg-violet-400/20' },
     sessions: { icon: '🔐', title: deleted ? 'משתמש התנתק' : 'משתמש התחבר', detail: '', color: 'bg-slate-200 dark:bg-slate-700' },
     families: { icon: '🏠', title: deleted ? 'משפחה נמחקה' : updated ? 'משפחה עודכנה' : 'משפחה חדשה נוצרה', detail: detail.name, color: 'bg-orange-100 dark:bg-orange-400/20' },
-    family_members: { icon: '👥', title: deleted ? 'משתמש עזב משפחה' : 'משתמש הצטרף למשפחה', detail: detail.member_role === 'shopper' ? 'קונה' : 'ניהול הבית', color: 'bg-teal-100 dark:bg-teal-400/20' },
+    family_members: { icon: '👥', title: deleted ? 'משתמש עזב משפחה' : 'משתמש הצטרף למשפחה', detail: detail.member_role === 'shopper' ? 'קונה' : 'בן בית', color: 'bg-teal-100 dark:bg-teal-400/20' },
     imported_receipts: { icon: '🧾', title: 'קבלה נסרקה', detail: '', color: 'bg-blue-100 dark:bg-blue-400/20' },
     push_subscriptions: { icon: '🔔', title: deleted ? 'התראות כובו' : 'התראות הופעלו', detail: '', color: 'bg-pink-100 dark:bg-pink-400/20' },
     admin_audit_log: { icon: '🛡️', title: 'פעולת מנהל', detail: detail.action, color: 'bg-red-100 dark:bg-red-400/20' },

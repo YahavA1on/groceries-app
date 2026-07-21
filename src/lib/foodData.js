@@ -121,7 +121,9 @@ export async function fetchRatingsByOwner(session) {
   const rows = result.data || []
   const foodsResult = await fetchFoodsByIds(rows.map((row) => row.food_id))
   const foodsById = new Map((foodsResult.data || []).map((food) => [food.id, food]))
-  const normalizedRows = rows.map((row) => ({ ...row, food: foodsById.get(row.food_id) || null }))
+  const normalizedRows = rows
+    .filter((row) => row.owner_id === session.user_id)
+    .map((row) => ({ ...row, food: foodsById.get(row.food_id) || null }))
   const ratings = {}
   for (const row of normalizedRows) ratings[row.food_id] = row.rating
   return { data: ratings, error: null, rows: normalizedRows }
@@ -191,6 +193,21 @@ export async function finishFamilyShopping(session) {
   return supabase.rpc('finish_family_shopping', {
     p_session_token: session.token,
   })
+}
+
+export async function fetchFamilyRatingOverview(session) {
+  if (!session?.token) return { data: { members: [], rows: [] }, error: null }
+  const result = await supabase.rpc('get_family_rating_overview', { p_session_token: session.token })
+  if (result.error) return { data: { members: [], rows: [] }, error: result.error }
+  const members = Array.isArray(result.data?.members) ? result.data.members : []
+  const rows = Array.isArray(result.data?.ratings) ? result.data.ratings : []
+  const foodsResult = await fetchFoodsByIds(rows.map((row) => row.food_id))
+  if (foodsResult.error) return { data: { members: [], rows: [] }, error: foodsResult.error }
+  const foodsById = new Map((foodsResult.data || []).map((food) => [food.id, food]))
+  return {
+    data: { members, rows: rows.map((row) => ({ ...row, food: foodsById.get(row.food_id) || null })) },
+    error: null,
+  }
 }
 
 export async function updateFoodUnitQuantity(session, foodId, unitQuantity) {

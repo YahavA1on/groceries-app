@@ -60,7 +60,7 @@ export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionC
   async function deleteAccount(event) {
     event.preventDefault()
     setDeleteMessage('')
-    if (!window.confirm('מחיקת החשבון היא קבועה. אם זה חשבון ניהול הבית, הניהול יעבור לבן המשפחה הוותיק הבא. להמשיך?')) return
+    if (!window.confirm('מחיקת החשבון היא קבועה. אם זה חשבון בן הבית האחראי, האחריות תעבור לבן המשפחה הוותיק הבא. להמשיך?')) return
     setDeleteBusy(true)
     const result = await deleteOwnAccount(session, deletePassword)
     setDeleteBusy(false)

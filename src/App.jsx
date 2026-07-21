@@ -141,7 +141,7 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {session.family_id && (session.member_role === 'manager' || session.is_admin) ? <button
+            {session.family_id ? <button
               aria-label="סריקת קבלה"
               className={`flex h-10 w-10 items-center justify-center rounded-xl text-slate-950 transition dark:text-slate-100 ${
                 activeTab === 'receipt'

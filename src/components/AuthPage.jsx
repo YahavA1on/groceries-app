@@ -116,7 +116,7 @@ export default function AuthPage({ existingSession = null, onLogin }) {
               <fieldset>
                 <legend className="mb-2 text-sm font-bold text-slate-700">איך תשתמשו באפליקציה?</legend>
                 <div className="grid grid-cols-2 gap-2">
-                  <RoleButton active={role === 'owner'} label="ניהול הבית" onClick={() => setRole('owner')} />
+                  <RoleButton active={role === 'owner'} label="בן בית" onClick={() => setRole('owner')} />
                   <RoleButton active={role === 'shopper'} label="קונה" onClick={() => setRole('shopper')} />
                 </div>
               </fieldset>

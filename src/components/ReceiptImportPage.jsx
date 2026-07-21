@@ -17,7 +17,7 @@ export default function ReceiptImportPage({ session }) {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const canImport = session.member_role === 'manager' || session.is_admin
+  const canImport = Boolean(session.family_id)
   const scanReceiptUrl = useCallback(async (value) => {
     setLoading(true)
     setError('')

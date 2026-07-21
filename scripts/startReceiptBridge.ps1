@@ -7,6 +7,8 @@ $bridgeOut = Join-Path $env:TEMP 'groceries-receipt-bridge.out.log'
 $bridgeErr = Join-Path $env:TEMP 'groceries-receipt-bridge.err.log'
 $tunnelOut = Join-Path $env:TEMP 'groceries-receipt-tunnel.out.log'
 $tunnelErr = Join-Path $env:TEMP 'groceries-receipt-tunnel.err.log'
+$tunnelUrlFile = Join-Path $env:TEMP 'groceries-receipt-tunnel.url'
+$defaultCloudflared = Join-Path $env:LOCALAPPDATA 'groceries-app\cloudflared.exe'
 $bridge = $null
 $tunnel = $null
 
@@ -16,9 +18,23 @@ try {
     -UseBasicParsing `
     -TimeoutSec 2
   if ($existingBridge.StatusCode -eq 200 -and $existingBridge.Content.Trim() -eq 'ok') {
-    Write-Host 'The encrypted receipt bridge is already running.' -ForegroundColor Green
-    Write-Host 'You do not need to start another copy. The website can use the existing bridge.'
-    exit 0
+    $savedTunnelUrl = if (Test-Path $tunnelUrlFile) { (Get-Content $tunnelUrlFile -Raw).Trim() } else { '' }
+    try {
+      $publicHealth = Invoke-WebRequest -Uri "$savedTunnelUrl/health" -UseBasicParsing -TimeoutSec 5
+      if ($publicHealth.StatusCode -eq 200 -and $publicHealth.Content.Trim() -eq 'ok') {
+        Write-Host "The encrypted receipt bridge is already online: $savedTunnelUrl" -ForegroundColor Green
+        exit 0
+      }
+    } catch {
+      Write-Warning 'The local bridge is running but its public tunnel expired. Restarting both.'
+    }
+
+    $existingConnection = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($existingConnection) { Stop-Process -Id $existingConnection.OwningProcess -Force -ErrorAction SilentlyContinue }
+    Get-Process cloudflared -ErrorAction SilentlyContinue |
+      Where-Object { $_.Path -eq $defaultCloudflared } |
+      Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
   }
 } catch {
   # No healthy bridge is listening, so continue with a normal startup.
@@ -41,7 +57,6 @@ try {
     throw "Receipt bridge failed to start: $(Get-Content $bridgeErr -Raw -ErrorAction SilentlyContinue)"
   }
 
-  $defaultCloudflared = Join-Path $env:LOCALAPPDATA 'groceries-app\cloudflared.exe'
   $cloudflared = if ($env:CLOUDFLARED_PATH) {
     $env:CLOUDFLARED_PATH
   } elseif (Test-Path $defaultCloudflared) {
@@ -92,6 +107,8 @@ try {
     "RECEIPT_BRIDGE_SECRET=$bridgeSecret" `
     --project-ref $projectRef
   if ($LASTEXITCODE -ne 0) { throw 'Could not update Supabase receipt bridge secrets.' }
+
+  Set-Content -Path $tunnelUrlFile -Value $tunnelUrl -NoNewline
 
   Write-Host "Encrypted receipt bridge is online: $tunnelUrl" -ForegroundColor Green
   Write-Host 'Keep this window open. Press Ctrl+C to stop the bridge.'

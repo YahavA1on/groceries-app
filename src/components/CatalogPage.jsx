@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
+import { FamilyRatingPicker, FamilyRatingSummary } from './FamilyRatingView'
 import TopNotice from './TopNotice'
 import { useCart } from '../hooks/useCart'
-import { DEFAULT_MANUFACTURER, addInventoryQuantities, addShoppingListItems, applyRelatedRatings, deleteFamilyRating, fetchFoodsWithOptionalCategory, fetchRatingsByOwner, saveFamilyRating } from '../lib/foodData'
+import { useFamilyRatings } from '../hooks/useFamilyRatings'
+import { DEFAULT_MANUFACTURER, addInventoryQuantities, addShoppingListItems, deleteFamilyRating, fetchFoodsWithOptionalCategory, saveFamilyRating } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, getFoodCategory, groupFoodsByRank, groupFoodsByRatingMood, groupItemsByCategory, matchesFoodFilters, rankMetaForRating, ratingColorClass, visibleUniqueFoods } from '../lib/foodFilters'
 import { isRateableFood } from '../lib/productRules'
 import { findEquivalentCatalogFood } from '../lib/receiptApi'
@@ -19,7 +21,6 @@ export default function CatalogPage({ onSubmitted, session }) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [ratings, setRatings] = useState({})
   const [ratingFoodId, setRatingFoodId] = useState(null)
   const [confirmAction, setConfirmAction] = useState(null)
   const [editingFood, setEditingFood] = useState(null)
@@ -34,10 +35,7 @@ export default function CatalogPage({ onSubmitted, session }) {
   const loadFoods = useCallback(async () => {
     setError('')
 
-    const [foodsResult, ratingsResult] = await Promise.all([
-      fetchFoodsWithOptionalCategory(),
-      fetchRatingsByOwner(session),
-    ])
+    const foodsResult = await fetchFoodsWithOptionalCategory()
 
     const loadedFoods = foodsResult.data || []
 
@@ -48,10 +46,8 @@ export default function CatalogPage({ onSubmitted, session }) {
       setFoods(loadedFoods)
     }
 
-    if (!ratingsResult.error) setRatings(applyRelatedRatings(loadedFoods, ratingsResult.data, ratingsResult.rows))
-
     setLoading(false)
-  }, [session])
+  }, [])
 
   useEffect(() => {
     const timeoutId = setTimeout(loadFoods, 0)
@@ -65,6 +61,18 @@ export default function CatalogPage({ onSubmitted, session }) {
   }, [foods])
 
   const catalogFoods = useMemo(() => sortFoodsByName(visibleUniqueFoods(foods)), [foods])
+  const {
+    allSelected,
+    commonGroundFoodIds,
+    detailsByFood,
+    members,
+    ratings,
+    refreshRatings,
+    selectedMemberId,
+    setSelectedMemberId,
+  } = useFamilyRatings(session, catalogFoods)
+  const canRate = selectedMemberId === session.user_id
+    && (!session.is_system_admin || session.family_id === session.home_family_id)
   const categoryOptions = useMemo(() => buildCategoryOptions(catalogFoods), [catalogFoods])
   const filteredFoods = useMemo(
     () => catalogFoods.filter((food) => matchesFoodFilters(food, search, category)),
@@ -164,7 +172,7 @@ export default function CatalogPage({ onSubmitted, session }) {
       return false
     }
 
-    setRatings((current) => ({ ...current, [foodId]: rating }))
+    await refreshRatings()
     return true
   }
 
@@ -242,11 +250,7 @@ export default function CatalogPage({ onSubmitted, session }) {
         return
       }
 
-      setRatings((current) => {
-        const next = { ...current }
-        delete next[editingFood.id]
-        return next
-      })
+      await refreshRatings()
     } else {
       const saved = await saveRating(editingFood.id, Number(editingValues.rating))
       if (!saved) {
@@ -284,11 +288,7 @@ export default function CatalogPage({ onSubmitted, session }) {
 
     removeProduct(editingFood.id)
     setFoods((current) => current.filter((food) => food.id !== editingFood.id))
-    setRatings((current) => {
-      const next = { ...current }
-      delete next[editingFood.id]
-      return next
-    })
+    await refreshRatings()
     setEditingBusy(false)
     closeEditor()
     setSuccess('המוצר נמחק.')
@@ -434,6 +434,8 @@ export default function CatalogPage({ onSubmitted, session }) {
         search={search}
       />
 
+      {session.role === 'shopper' ? <FamilyRatingPicker members={members} onChange={setSelectedMemberId} selectedMemberId={selectedMemberId} /> : null}
+
       {loading ? (
         <EmptyState text="טוען מוצרים..." />
       ) : filteredFoods.length === 0 ? (
@@ -457,11 +459,14 @@ export default function CatalogPage({ onSubmitted, session }) {
                       onDecrement={() => changeQuantity(food.id, -1)}
                       onEdit={canManageItems && (session.is_admin || food.created_by === session.user_id) ? () => openEditor(food) : null}
                       onIncrement={() => changeQuantity(food.id, 1)}
-                      onRate={canManageItems && isRateableFood(food) ? (rating) => saveRating(food.id, rating) : null}
+                      onRate={canRate && isRateableFood(food) ? (rating) => saveRating(food.id, rating) : null}
                       quantity={items[food.id]?.quantity || 0}
                       rating={ratings[food.id]}
                       ratingGroup={!canManageItems || group.key === 'not-rateable' ? group : null}
                       ratingBusy={ratingFoodId === food.id}
+                      ratingDetails={detailsByFood[food.id] || []}
+                      showAllRatings={allSelected}
+                      commonGround={commonGroundFoodIds.has(food.id)}
                     />
                   ))}
                 </div>
@@ -525,11 +530,11 @@ function CategorySubheading({ count, title }) {
   )
 }
 
-function FoodRow({ food, onAdd, onDecrement, onEdit, onIncrement, onRate, quantity, rating, ratingBusy, ratingGroup }) {
+function FoodRow({ commonGround, food, onAdd, onDecrement, onEdit, onIncrement, onRate, quantity, rating, ratingBusy, ratingDetails, ratingGroup, showAllRatings }) {
   const rank = ratingGroup || rankMetaForRating(rating)
 
   return (
-    <article className={`rounded-2xl bg-white p-3 shadow-sm ring-1 ${rank.ring} dark:bg-slate-900`}>
+    <article className={`rounded-2xl bg-white p-3 shadow-sm ring-1 ${commonGround ? 'ring-2 ring-emerald-400' : rank.ring} dark:bg-slate-900`}>
       <div className="flex items-center gap-3">
       <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-cyan-100 dark:bg-slate-800">
         {food.picture_url ? (
@@ -593,6 +598,7 @@ function FoodRow({ food, onAdd, onDecrement, onEdit, onIncrement, onRate, quanti
           ))}
         </div>
       ) : null}
+      <FamilyRatingSummary commonGround={commonGround} details={ratingDetails} visible={showAllRatings} />
     </article>
   )
 }

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import FoodFilterBar from './FoodFilterBar'
+import { FamilyRatingPicker, FamilyRatingSummary } from './FamilyRatingView'
 import TopNotice from './TopNotice'
-import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchInventoryRows, fetchRatingsByOwner, setInventoryQuantity } from '../lib/foodData'
+import { useFamilyRatings } from '../hooks/useFamilyRatings'
+import { DEFAULT_MANUFACTURER, fetchInventoryRows, setInventoryQuantity } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRank, groupRowsByRatingMood } from '../lib/foodFilters'
 import { formatDate } from '../lib/format'
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
@@ -9,7 +11,6 @@ import { userErrorMessage } from '../lib/userErrors'
 
 export default function InventoryPage({ session }) {
   const [rows, setRows] = useState([])
-  const [ratings, setRatings] = useState({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState(ALL_CATEGORIES)
@@ -21,10 +22,7 @@ export default function InventoryPage({ session }) {
   const loadInventory = useCallback(async () => {
     if (!familyId) return
 
-    const [inventoryResult, ratingsResult] = await Promise.all([
-      fetchInventoryRows(session),
-      fetchRatingsByOwner(session),
-    ])
+    const inventoryResult = await fetchInventoryRows(session)
 
     if (inventoryResult.error) {
       setNotice({ tone: 'error', text: userErrorMessage(inventoryResult.error) })
@@ -33,10 +31,6 @@ export default function InventoryPage({ session }) {
       replaceStateWhenChanged(setRows, sortInventoryRows(inventoryResult.data || []))
     }
 
-    if (!ratingsResult.error) {
-      const foods = (inventoryResult.data || []).map((row) => row.food).filter(Boolean)
-      replaceStateWhenChanged(setRatings, applyRelatedRatings(foods, ratingsResult.data, ratingsResult.rows))
-    }
     setLoading(false)
   }, [familyId, session])
 
@@ -50,6 +44,8 @@ export default function InventoryPage({ session }) {
   }, [loadInventory])
 
   const categoryOptions = useMemo(() => buildCategoryOptions(rows.map((row) => row.food).filter(Boolean)), [rows])
+  const ratingFoods = useMemo(() => rows.map((row) => row.food).filter(Boolean), [rows])
+  const { allSelected, commonGroundFoodIds, detailsByFood, members, ratings, selectedMemberId, setSelectedMemberId } = useFamilyRatings(session, ratingFoods)
   const filteredRows = useMemo(
     () => filterFoodRows(rows, { category, search }),
     [category, rows, search]
@@ -110,6 +106,8 @@ export default function InventoryPage({ session }) {
         search={search}
       />
 
+      {session.role === 'shopper' ? <FamilyRatingPicker members={members} onChange={setSelectedMemberId} selectedMemberId={selectedMemberId} /> : null}
+
       {loading ? (
         <EmptyState text="טוען מלאי..." />
       ) : rows.length === 0 ? (
@@ -130,11 +128,14 @@ export default function InventoryPage({ session }) {
                   {categoryGroup.items.map((row) => (
                     <InventoryRow
                       group={group}
+                      commonGround={commonGroundFoodIds.has(row.food_id || row.food?.id)}
                       isAdjusting={adjustingKey === inventoryRowKey(row)}
                       key={inventoryRowKey(row)}
                       onDecrease={() => changeInventoryQuantity(row, -1)}
                       onIncrease={() => changeInventoryQuantity(row, 1)}
                       row={row}
+                      ratingDetails={detailsByFood[row.food_id || row.food?.id] || []}
+                      showAllRatings={allSelected}
                     />
                   ))}
                 </div>
@@ -156,11 +157,11 @@ function CategorySubheading({ count, title }) {
   )
 }
 
-function InventoryRow({ group, isAdjusting, onDecrease, onIncrease, row }) {
+function InventoryRow({ commonGround, group, isAdjusting, onDecrease, onIncrease, ratingDetails, row, showAllRatings }) {
   const additions = inventoryAdditionGroups(row)
 
   return (
-    <article className={`rounded-2xl bg-white p-3 shadow-sm ring-1 ${group.ring} dark:bg-slate-900`}>
+    <article className={`rounded-2xl bg-white p-3 shadow-sm ring-1 ${commonGround ? 'ring-2 ring-emerald-400' : group.ring} dark:bg-slate-900`}>
       <div className="flex items-center gap-3">
         <FoodThumb food={row.food} />
         <div className="min-w-0 flex-1">
@@ -207,6 +208,7 @@ function InventoryRow({ group, isAdjusting, onDecrease, onIncrease, row }) {
           </div>
         ) : <p className="text-xs text-slate-400">תאריך ההוספה אינו זמין.</p>}
       </div>
+      <FamilyRatingSummary commonGround={commonGround} details={ratingDetails} visible={showAllRatings} />
     </article>
   )
 }
