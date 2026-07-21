@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import TopNotice from './TopNotice'
-import { addInventoryQuantities, DEFAULT_MANUFACTURER } from '../lib/foodData'
+import { addReceiptInventoryQuantities, DEFAULT_MANUFACTURER } from '../lib/foodData'
 import { buildFoodInsert, fetchReceiptText, parseReceiptItems } from '../lib/receiptImport'
 import { fetchCatalogFromServer, normalizeReceiptItemsWithAi } from '../lib/receiptApi'
 import { getFoodCategory } from '../lib/foodFilters'
@@ -63,8 +63,9 @@ export default function ReceiptImportPage({ session }) {
 
     try {
       const itemFoods = await ensureFoods(items, session)
-      const { newInventoryCount } = await addInventoryQuantities(session, itemFoods)
-      setSuccess(`נוספו ${newInventoryCount} מוצרים חדשים למלאי הבית.`)
+      const { newInventoryCount, removedRequestCount } = await addReceiptInventoryQuantities(session, itemFoods)
+      const requestMessage = removedRequestCount > 0 ? ` ${removedRequestCount} בקשות תואמות הוסרו מהרשימה.` : ''
+      setSuccess(`נוספו ${newInventoryCount} מוצרים חדשים למלאי הבית.${requestMessage}`)
       setItems([])
       setReceiptUrl('')
     } catch (saveError) {

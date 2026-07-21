@@ -61,6 +61,29 @@ export async function fetchInventoryRows(session) {
   })
 }
 
+export async function addReceiptInventoryQuantities(session, itemFoods) {
+  const quantityByFoodId = new Map()
+  for (const { item, food } of itemFoods) {
+    if (!food?.id) continue
+    quantityByFoodId.set(food.id, (quantityByFoodId.get(food.id) || 0) + Number(item.quantity || 0))
+  }
+
+  const foodIds = Array.from(quantityByFoodId.keys())
+  if (!session?.token || foodIds.length === 0) return { newInventoryCount: 0, removedRequestCount: 0 }
+
+  const inventoryBefore = await fetchInventoryQuantities(session, foodIds)
+  const { data, error } = await supabase.rpc('add_family_receipt_inventory_items', {
+    p_session_token: session.token,
+    p_items: Array.from(quantityByFoodId, ([food_id, quantity]) => ({ food_id, quantity })),
+  })
+  if (error) throw error
+
+  return {
+    newInventoryCount: foodIds.filter((foodId) => !inventoryBefore.has(foodId)).length,
+    removedRequestCount: Number(data?.removed_request_count || 0),
+  }
+}
+
 export async function fetchInventoryQuantities(session, foodIds) {
   const ids = Array.from(new Set(foodIds.filter(Boolean)))
   if (!session?.token || ids.length === 0) return new Map()
