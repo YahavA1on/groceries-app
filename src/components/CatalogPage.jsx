@@ -5,6 +5,7 @@ import { useCart } from '../hooks/useCart'
 import { DEFAULT_MANUFACTURER, addInventoryQuantities, addShoppingListItems, applyRelatedRatings, deleteFamilyRating, fetchFoodsWithOptionalCategory, fetchRatingsByOwner, saveFamilyRating } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, getFoodCategory, groupFoodsByRank, groupFoodsByRatingMood, groupItemsByCategory, matchesFoodFilters, rankMetaForRating, ratingColorClass, visibleUniqueFoods } from '../lib/foodFilters'
 import { isRateableFood } from '../lib/productRules'
+import { findEquivalentCatalogFood } from '../lib/receiptApi'
 import { supabase } from '../lib/supabase'
 import { sendPushEvent } from '../lib/pushNotifications'
 
@@ -200,6 +201,21 @@ export default function CatalogPage({ onSubmitted, session }) {
     setError('')
     setSuccess('')
 
+    if (foodIdentityChanged(editingFood, payload)) {
+      try {
+        const duplicate = await findEquivalentCatalogFood(payload, foods, editingFood.id)
+        if (duplicate) {
+          setEditingBusy(false)
+          setError(`המוצר כבר קיים בשם "${duplicate.name}".`)
+          return
+        }
+      } catch {
+        setEditingBusy(false)
+        setError('לא ניתן לבדוק כפילויות כרגע. נסו שוב.')
+        return
+      }
+    }
+
     const { data: updatedFood, error: updateError } = await supabase.rpc('update_catalog_food', {
       p_session_token: session.token,
       p_food_id: editingFood.id,
@@ -212,7 +228,7 @@ export default function CatalogPage({ onSubmitted, session }) {
 
     if (updateError) {
       setEditingBusy(false)
-      setError(updateError.message)
+      setError(updateError.code === '23505' ? 'המוצר כבר קיים.' : updateError.message)
       return
     }
 
@@ -286,6 +302,21 @@ export default function CatalogPage({ onSubmitted, session }) {
 
     setEditingBusy(true)
     setError('')
+    setSuccess('')
+
+    try {
+      const duplicate = await findEquivalentCatalogFood(payload, foods)
+      if (duplicate) {
+        setEditingBusy(false)
+        setError(`המוצר כבר קיים בשם "${duplicate.name}".`)
+        return
+      }
+    } catch {
+      setEditingBusy(false)
+      setError('לא ניתן לבדוק כפילויות כרגע. נסו שוב.')
+      return
+    }
+
     const { data, error: addError } = await supabase.rpc('add_catalog_food', {
       p_session_token: session.token,
       p_name: payload.name,
@@ -594,7 +625,8 @@ function EditFoodSheet({ busy, categoryOptions, food, onDelete, onRequestClose, 
           <label className="block">
             <span className="mb-1 block text-sm font-black text-slate-600 dark:text-slate-300">שם</span>
             <input
-              className="h-12 w-full rounded-xl border border-rose-200 bg-white px-3 text-base outline-none focus:border-rose-600 focus:ring-4 focus:ring-rose-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-rose-900/40"
+              className="product-name-input h-12 w-full rounded-xl border border-rose-200 bg-white px-3 text-base outline-none focus:border-rose-600 focus:ring-4 focus:ring-rose-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:ring-rose-900/40"
+              dir="auto"
               onChange={(event) => setField('name', event.target.value)}
               value={values.name}
             />
@@ -717,7 +749,7 @@ function FoodDetailsSheet({ busy, categoryOptions, onClose, onSave, onValuesChan
 
         <div className="space-y-3">
           <RequiredField label="שם מוצר">
-            <input className={foodInputClass} onChange={(event) => setField('name', event.target.value)} required value={values.name} />
+            <input className={`product-name-input ${foodInputClass}`} dir="auto" onChange={(event) => setField('name', event.target.value)} required value={values.name} />
           </RequiredField>
           <RequiredField label="יצרן">
             <div className="flex gap-2">
@@ -823,6 +855,13 @@ function hasEditChanges(food, values, rating) {
   if (!food || !values) return false
   const baseline = buildEditValues(food, rating)
   return Object.keys(baseline).some((key) => String(baseline[key] ?? '') !== String(values[key] ?? ''))
+}
+
+function foodIdentityChanged(food, values) {
+  if (!food || !values) return false
+  return ['name', 'manufacturer', 'unit_qty'].some(
+    (key) => String(food[key] || '').trim() !== String(values[key] || '').trim()
+  )
 }
 
 function sortFoodsByName(foods) {

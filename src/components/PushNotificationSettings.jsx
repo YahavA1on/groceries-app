@@ -11,6 +11,8 @@ export default function PushNotificationSettings({ session }) {
   useEffect(() => {
     if (!capability.supported) return undefined
     let cancelled = false
+    const syncChoice = (event) => setEnabled(event.detail?.choice === 'enabled')
+    window.addEventListener('groceries:push-choice', syncChoice)
     getPushSubscription()
       .then((subscription) => {
         if (!cancelled) setEnabled(Boolean(subscription))
@@ -19,7 +21,10 @@ export default function PushNotificationSettings({ session }) {
       .finally(() => {
         if (!cancelled) setChecking(false)
       })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      window.removeEventListener('groceries:push-choice', syncChoice)
+    }
   }, [capability.supported])
 
   async function toggleNotifications() {
@@ -49,7 +54,7 @@ export default function PushNotificationSettings({ session }) {
       {!capability.supported ? (
         <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">{capability.reason}</p>
       ) : (
-        <button className={`mt-3 h-11 w-full rounded-xl font-black disabled:opacity-50 ${enabled ? 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100' : 'bg-rose-600 text-white dark:bg-cyan-400 dark:text-slate-950'}`} disabled={busy || checking} onClick={toggleNotifications} type="button">
+        <button aria-pressed={enabled} className={`mt-3 h-11 w-full rounded-xl font-black disabled:opacity-50 ${enabled ? 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100' : 'bg-rose-600 text-white dark:bg-cyan-400 dark:text-slate-950'}`} disabled={busy || checking} onClick={toggleNotifications} type="button">
           {checking ? 'בודק...' : busy ? 'מעדכן...' : enabled ? 'כיבוי התראות במכשיר' : 'הפעלת התראות במכשיר'}
         </button>
       )}

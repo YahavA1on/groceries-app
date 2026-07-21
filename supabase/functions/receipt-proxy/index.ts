@@ -43,6 +43,7 @@ Deno.serve(async (request) => {
     if (body.action === 'receipt') return await fetchReceipt(body.url, corsHeaders)
     if (body.action === 'catalog') return await fetchCatalog(body.query, body.store, corsHeaders)
     if (body.action === 'normalize') return await normalizeItems(body.items, corsHeaders)
+    if (body.action === 'product-identity') return await matchProductIdentity(body.product, body.candidates, corsHeaders)
     return response('Unsupported action', 400, corsHeaders)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Upstream request failed'
@@ -310,6 +311,84 @@ async function normalizeItems(value: unknown, corsHeaders: HeadersInit) {
 
   const normalized = validateAiOutput(output, items)
   return new Response(JSON.stringify({ items: normalized }), {
+    headers: { ...corsHeaders, 'Cache-Control': 'no-store', 'Content-Type': 'application/json; charset=utf-8' },
+  })
+}
+
+async function matchProductIdentity(productValue: unknown, candidatesValue: unknown, corsHeaders: HeadersInit) {
+  const apiKey = Deno.env.get('GEMINI_API_KEY')
+  if (!apiKey) return response('Gemini is not configured', 503, corsHeaders)
+  if (!productValue || typeof productValue !== 'object' || !Array.isArray(candidatesValue)) {
+    return response('Invalid product identity input', 400, corsHeaders)
+  }
+
+  const productRecord = productValue as Record<string, unknown>
+  const product = {
+    name: cleanString(productRecord.name, 300),
+    manufacturer: cleanString(productRecord.manufacturer, 120),
+    unit_qty: cleanString(productRecord.unit_qty, 120),
+  }
+  const candidates = candidatesValue.slice(0, 50).flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return []
+    const record = candidate as Record<string, unknown>
+    const id = cleanString(record.id, 100)
+    const name = cleanString(record.name, 300)
+    if (!id || !name) return []
+    return [{ id, name }]
+  })
+  if (!product.name || !product.manufacturer || !product.unit_qty || candidates.length === 0) {
+    return new Response(JSON.stringify({ matched_food_id: '', confidence: 1 }), {
+      headers: { ...corsHeaders, 'Cache-Control': 'no-store', 'Content-Type': 'application/json; charset=utf-8' },
+    })
+  }
+
+  const prompt = [
+    'You prevent duplicate products in an Israeli grocery catalog.',
+    'The proposed product and every candidate already have equivalent manufacturer and package weight.',
+    'Decide whether the proposed name and one candidate describe the exact same real grocery product.',
+    'Ignore harmless spelling differences, OCR errors, punctuation, abbreviations, word order, and redundant marketing words.',
+    'Do not merge different flavors, varieties, fat percentages, dietary variants, product forms, or package types.',
+    'Return the candidate id only when confidence is at least 0.85. Otherwise return an empty matched_food_id.',
+    JSON.stringify({ product, candidates }),
+  ].join('\n')
+
+  const geminiResponse = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0,
+          responseMimeType: 'application/json',
+          responseJsonSchema: {
+            type: 'object',
+            properties: {
+              matched_food_id: { type: 'string' },
+              confidence: { type: 'number', minimum: 0, maximum: 1 },
+            },
+            required: ['matched_food_id', 'confidence'],
+            additionalProperties: false,
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(20_000),
+    },
+  )
+  if (!geminiResponse.ok) throw new Error(`Gemini identity check returned ${geminiResponse.status}`)
+
+  const geminiPayload = await geminiResponse.json()
+  const outputText = geminiPayload?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || '').join('')
+  if (!outputText) throw new Error('Gemini identity check returned an empty response')
+  const output = JSON.parse(outputText) as Record<string, unknown>
+  const confidence = Number(output.confidence)
+  const requestedId = cleanString(output.matched_food_id, 100)
+  const matchedId = Number.isFinite(confidence) && confidence >= 0.85 && candidates.some((candidate) => candidate.id === requestedId)
+    ? requestedId
+    : ''
+
+  return new Response(JSON.stringify({ matched_food_id: matchedId, confidence: Number.isFinite(confidence) ? confidence : 0 }), {
     headers: { ...corsHeaders, 'Cache-Control': 'no-store', 'Content-Type': 'application/json; charset=utf-8' },
   })
 }

@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 
 const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY || 'BIpYf36aR894qxsWFQwvkLE1hPPPrCKVGnmVRRTlzj0VyZqqxMt6cMoB6-uL9LTYoPO5SKZ7n1VzyY7blsO9qHQ'
+const promptStoragePrefix = 'groceries_push_prompt_'
 
 export function pushCapability() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
@@ -48,12 +49,16 @@ export async function enablePushNotifications(session) {
     await subscription.unsubscribe()
     throw error
   }
+  rememberPushPromptChoice(session, 'enabled')
   return subscription
 }
 
 export async function disablePushNotifications(session) {
   const subscription = await getPushSubscription()
-  if (!subscription) return
+  if (!subscription) {
+    rememberPushPromptChoice(session, 'disabled')
+    return
+  }
 
   const { error } = await supabase.rpc('delete_push_subscription', {
     p_session_token: session.token,
@@ -61,6 +66,26 @@ export async function disablePushNotifications(session) {
   })
   if (error) throw error
   await subscription.unsubscribe()
+  rememberPushPromptChoice(session, 'disabled')
+}
+
+export function hasAnsweredPushPrompt(session) {
+  if (!session?.user_id) return true
+  try {
+    return Boolean(localStorage.getItem(`${promptStoragePrefix}${session.user_id}`))
+  } catch {
+    return false
+  }
+}
+
+export function rememberPushPromptChoice(session, choice) {
+  if (!session?.user_id) return
+  try {
+    localStorage.setItem(`${promptStoragePrefix}${session.user_id}`, choice)
+  } catch {
+    // The browser may block storage in private mode; notifications can still work.
+  }
+  window.dispatchEvent(new CustomEvent('groceries:push-choice', { detail: { choice } }))
 }
 
 export async function sendPushEvent(session, eventType, foodIds) {

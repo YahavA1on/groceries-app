@@ -36,6 +36,11 @@
     cursor: not-allowed;
   }
 
+  .product-name-input {
+    text-align: start;
+    unicode-bidi: plaintext;
+  }
+
   @keyframes top-notice-pop {
     from {
       opacity: 0;

@@ -50,6 +50,41 @@ export async function normalizeReceiptItemsWithAi(items) {
   return Array.isArray(payload?.items) ? payload.items : []
 }
 
+export async function findEquivalentCatalogFood(product, foods, excludeFoodId = null) {
+  const manufacturerKey = normalizeIdentityText(product.manufacturer)
+  const unitKey = normalizeIdentityUnit(product.unit_qty)
+  const candidates = (foods || []).filter((food) => (
+    food.id !== excludeFoodId
+    && normalizeIdentityText(food.manufacturer) === manufacturerKey
+    && normalizeIdentityUnit(food.unit_qty) === unitKey
+  ))
+  if (candidates.length === 0) return null
+
+  const nameKey = normalizeIdentityText(product.name)
+  const exactMatch = candidates.find((food) => normalizeIdentityText(food.name) === nameKey)
+  if (exactMatch) return exactMatch
+
+  for (let start = 0; start < candidates.length; start += 50) {
+    const batch = candidates.slice(start, start + 50)
+    const payload = await fetchJson(functionUrl, {
+      method: 'POST',
+      headers: functionHeaders(),
+      body: JSON.stringify({
+        action: 'product-identity',
+        product: {
+          name: product.name,
+          manufacturer: product.manufacturer,
+          unit_qty: product.unit_qty,
+        },
+        candidates: batch.map((food) => ({ id: String(food.id), name: food.name })),
+      }),
+    })
+    const match = batch.find((food) => String(food.id) === String(payload?.matched_food_id))
+    if (match) return match
+  }
+  return null
+}
+
 function functionHeaders() {
   return {
     Accept: 'application/json, text/plain, text/html, */*',
@@ -84,4 +119,32 @@ function receiptSourceName(item) {
     return String(source.name || source.title || source.productName || source.description || item.name).trim()
   }
   return item.name
+}
+
+function normalizeIdentityText(value) {
+  const finalLetters = { ך: 'כ', ם: 'מ', ן: 'נ', ף: 'פ', ץ: 'צ' }
+  return String(value || '')
+    .trim()
+    .toLocaleLowerCase('he')
+    .replace(/[ךםןףץ]/g, (letter) => finalLetters[letter])
+    .replace(/[^a-z0-9א-ת]+/g, '')
+}
+
+function normalizeIdentityUnit(value) {
+  const text = String(value || '').trim().toLocaleLowerCase('he').replace(/,/g, '.')
+  const numbers = text.match(/\d+(?:\.\d+)?/g) || []
+  if (numbers.length !== 1) return normalizeIdentityText(text)
+  let amount = Number(numbers[0])
+  if (!Number.isFinite(amount)) return normalizeIdentityText(text)
+
+  if (/(ק.?ג|קילו|kg)/i.test(text)) return `${formatIdentityAmount(amount * 1000)}g`
+  if (/(גרם|גרמים|גר|gram|grams|(^|[^a-z])g([^a-z]|$))/i.test(text)) return `${formatIdentityAmount(amount)}g`
+  if (/(מ.?ל|milliliter|milliliters|ml)/i.test(text)) return `${formatIdentityAmount(amount)}ml`
+  if (/(ליטר|ליטרים|liter|liters|litre|litres|(^|[^a-z])l([^a-z]|$))/i.test(text)) return `${formatIdentityAmount(amount * 1000)}ml`
+  if (/(יחידה|יחידות|יח|unit|units)/i.test(text)) return `${formatIdentityAmount(amount)}unit`
+  return normalizeIdentityText(text)
+}
+
+function formatIdentityAmount(value) {
+  return String(Number(value.toFixed(3)))
 }

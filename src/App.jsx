@@ -5,6 +5,7 @@ import CatalogPage from './components/CatalogPage'
 import FulfillmentPage from './components/FulfillmentPage'
 import InventoryPage from './components/InventoryPage'
 import MyRequestsPage from './components/MyRequestsPage'
+import PushNotificationPrompt from './components/PushNotificationPrompt'
 import ProfileSheet from './components/ProfileSheet'
 import ReceiptImportPage from './components/ReceiptImportPage'
 import { getCurrentSession, logout, refreshCurrentSession, saveSession } from './lib/auth'
@@ -189,6 +190,7 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
           session={session}
         />
       ) : null}
+      <PushNotificationPrompt session={session} />
     </div>
   )
 }
