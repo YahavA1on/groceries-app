@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import TopNotice from './TopNotice'
-import { deleteAdminUser, fetchAdminDashboard, selectAdminFamily } from '../lib/adminData'
+import { deleteAdminFamily, deleteAdminUser, fetchAdminDashboard, selectAdminFamily, updateAdminUser } from '../lib/adminData'
+import { refreshCurrentSession } from '../lib/auth'
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
 import { userErrorMessage } from '../lib/userErrors'
 
@@ -24,8 +25,12 @@ export default function AdminPage({ onSessionChange, session }) {
   const [userSearch, setUserSearch] = useState('')
   const [userFamilyId, setUserFamilyId] = useState('')
   const [deletingUserId, setDeletingUserId] = useState('')
+  const [deletingFamilyId, setDeletingFamilyId] = useState('')
+  const [editingUser, setEditingUser] = useState(null)
+  const [savingUser, setSavingUser] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
 
   const loadDashboard = useCallback(async () => {
     const result = await fetchAdminDashboard(session, familyId)
@@ -57,7 +62,7 @@ export default function AdminPage({ onSessionChange, session }) {
   const visibleUsers = useMemo(() => {
     const needle = userSearch.trim().toLocaleLowerCase('he')
     return users.filter((user) => (
-      (!userFamilyId || user.family_id === userFamilyId)
+      (!userFamilyId || (userFamilyId === '__none' ? !user.family_id : user.family_id === userFamilyId))
       && (!needle || `${user.username} ${user.email || ''} ${user.family_name || ''}`.toLocaleLowerCase('he').includes(needle))
     ))
   }, [userFamilyId, userSearch, users])
@@ -94,11 +99,73 @@ export default function AdminPage({ onSessionChange, session }) {
       return
     }
     await loadDashboard()
+    setSuccess('המשתמש נמחק בהצלחה.')
+  }
+
+  async function saveUser(event) {
+    event.preventDefault()
+    setSavingUser(true)
+    const result = await updateAdminUser(session, editingUser)
+    setSavingUser(false)
+    if (result.error) {
+      setError(userErrorMessage(result.error))
+      return
+    }
+    if (result.data?.error) {
+      const messages = {
+        USER_NOT_FOUND: 'המשתמש לא נמצא או שכבר נמחק.',
+        INVALID_USERNAME: 'שם המשתמש חייב להכיל בין 2 ל־40 תווים.',
+        INVALID_EMAIL: 'יש להזין כתובת אימייל תקינה.',
+        INVALID_ROLE: 'יש לבחור תפקיד תקין.',
+        WEAK_PASSWORD: 'הסיסמה החדשה חייבת להכיל לפחות 8 תווים.',
+        USERNAME_TAKEN: 'שם המשתמש כבר תפוס.',
+        EMAIL_TAKEN: 'כתובת האימייל כבר רשומה בחשבון אחר.',
+        ACCOUNT_EXISTS: 'שם המשתמש או האימייל כבר קיימים.',
+        FAMILY_NOT_FOUND: 'המשפחה שנבחרה אינה קיימת.',
+        LAST_FAMILY_MEMBER: 'אי אפשר להוציא את החבר האחרון. יש למחוק את המשפחה במקום.',
+        LAST_FAMILY_MANAGER: 'אי אפשר להפוך את מנהל הבית היחיד לקונה. יש למנות קודם מנהל נוסף.',
+        PROTECTED_ADMIN_MEMBERSHIP: 'אי אפשר לשנות את המשפחה או התפקיד של מנהל המערכת.',
+      }
+      setError(messages[result.data.error] || 'לא ניתן לעדכן את המשתמש.')
+      return
+    }
+    const updatedOwnAccount = editingUser.user_id === session.user_id
+    setEditingUser(null)
+    setSuccess('פרטי המשתמש עודכנו בהצלחה.')
+    if (updatedOwnAccount) {
+      const refreshedSession = await refreshCurrentSession()
+      if (refreshedSession) onSessionChange(refreshedSession)
+    }
+    await loadDashboard()
+  }
+
+  async function removeFamily(family) {
+    const typedName = window.prompt(`מחיקת המשפחה תסיר את המלאי, הבקשות וההיסטוריה שלה. המשתמשים עצמם לא יימחקו.\nלהמשך, הקלידו בדיוק: ${family.family_name}`)
+    if (typedName !== family.family_name) return
+    setDeletingFamilyId(family.family_id)
+    const result = await deleteAdminFamily(session, family.family_id)
+    setDeletingFamilyId('')
+    if (result.error) {
+      setError(userErrorMessage(result.error))
+      return
+    }
+    if (result.data?.error) {
+      const messages = {
+        FAMILY_NOT_FOUND: 'המשפחה לא נמצאה או שכבר נמחקה.',
+        PROTECTED_ADMIN_FAMILY: 'אי אפשר למחוק את המשפחה של מנהל המערכת.',
+      }
+      setError(messages[result.data.error] || 'לא ניתן למחוק את המשפחה.')
+      return
+    }
+    if (familyId === family.family_id) setFamilyId('')
+    if (userFamilyId === family.family_id) setUserFamilyId('')
+    setSuccess('המשפחה והמידע השייך לה נמחקו. המשתמשים נשארו ללא שיוך.')
+    await loadDashboard()
   }
 
   return (
     <section className="space-y-4">
-      <TopNotice notice={error ? { tone: 'error', text: error } : null} onDismiss={() => setError('')} />
+      <TopNotice notice={error ? { tone: 'error', text: error } : success ? { tone: 'success', text: success } : null} onDismiss={() => { setError(''); setSuccess('') }} />
 
       <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-indigo-950 to-cyan-950 p-5 text-white shadow-xl">
         <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-300">Admin</p>
@@ -144,19 +211,22 @@ export default function AdminPage({ onSessionChange, session }) {
             </div>
             <div className="mt-3 flex snap-x gap-3 overflow-x-auto pb-1">
               {families.map((family) => (
-                <button
+                <article
                   className={`min-w-[13rem] snap-start rounded-2xl border p-3 text-right transition ${familyId === family.family_id ? 'border-rose-500 bg-rose-50 dark:border-cyan-400 dark:bg-cyan-400/10' : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800'}`}
                   key={family.family_id}
-                  onClick={() => setFamilyId((current) => current === family.family_id ? '' : family.family_id)}
-                  type="button"
                 >
-                  <p className="truncate font-black">{family.family_name}</p>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{family.member_count} משתמשים · {family.inventory_products} במלאי</p>
-                  <div className="mt-3 flex items-center justify-between text-xs font-bold">
-                    <span className="text-amber-700 dark:text-amber-300">{family.pending_requests} בקשות</span>
-                    <span className="text-emerald-700 dark:text-emerald-300">{family.purchases_7d} נקנו השבוע</span>
-                  </div>
-                </button>
+                  <button className="w-full text-right" onClick={() => setFamilyId((current) => current === family.family_id ? '' : family.family_id)} type="button">
+                    <p className="truncate font-black">{family.family_name}</p>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{family.member_count} משתמשים · {family.inventory_products} במלאי</p>
+                    <div className="mt-3 flex items-center justify-between text-xs font-bold">
+                      <span className="text-amber-700 dark:text-amber-300">{family.pending_requests} בקשות</span>
+                      <span className="text-emerald-700 dark:text-emerald-300">{family.purchases_7d} נקנו השבוע</span>
+                    </div>
+                  </button>
+                  <button className="mt-3 w-full rounded-xl bg-red-50 px-3 py-2 text-xs font-black text-red-700 disabled:opacity-50 dark:bg-red-500/10 dark:text-red-200" disabled={deletingFamilyId === family.family_id || family.family_id === session.home_family_id} onClick={() => removeFamily(family)} type="button">
+                    {family.family_id === session.home_family_id ? 'המשפחה שלך מוגנת' : deletingFamilyId === family.family_id ? 'מוחק...' : 'מחיקת משפחה'}
+                  </button>
+                </article>
               ))}
             </div>
           </div>
@@ -170,13 +240,14 @@ export default function AdminPage({ onSessionChange, session }) {
               <input className="h-11 min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none dark:border-slate-700 dark:bg-slate-800" onChange={(event) => setUserSearch(event.target.value)} placeholder="חיפוש משתמש" value={userSearch} />
               <select className="h-11 min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2 text-sm font-bold outline-none dark:border-slate-700 dark:bg-slate-800" onChange={(event) => setUserFamilyId(event.target.value)} value={userFamilyId}>
                 <option value="">כל המשפחות</option>
+                <option value="__none">ללא משפחה</option>
                 {families.map((family) => <option key={family.family_id} value={family.family_id}>{family.family_name}</option>)}
               </select>
             </div>
             <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
               <table className="w-full min-w-[48rem] border-collapse text-right text-sm">
                 <thead className="bg-slate-100 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                  <tr><th className="p-3">משתמש</th><th className="p-3">אימייל</th><th className="p-3">משפחה</th><th className="p-3">תפקיד</th><th className="p-3">כניסה אחרונה</th><th className="p-3">חיבורים</th><th className="p-3">פעולה</th></tr>
+                  <tr><th className="p-3">משתמש</th><th className="p-3">אימייל</th><th className="p-3">משפחה</th><th className="p-3">תפקיד</th><th className="p-3">כניסה אחרונה</th><th className="p-3">חיבורים</th><th className="p-3">פעולות</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {visibleUsers.map((user) => (
@@ -188,7 +259,10 @@ export default function AdminPage({ onSessionChange, session }) {
                       <td className="p-3">{user.last_login_at ? relativeTime(user.last_login_at) : 'לא ידוע'}</td>
                       <td className="p-3">{user.active_sessions}</td>
                       <td className="p-3">
-                        {user.is_admin ? <span className="text-xs font-bold text-slate-400">מוגן</span> : <button className="rounded-lg bg-red-50 px-3 py-2 text-xs font-black text-red-700 disabled:opacity-50 dark:bg-red-500/10 dark:text-red-200" disabled={deletingUserId === user.user_id} onClick={() => deleteUser(user)} type="button">{deletingUserId === user.user_id ? 'מוחק...' : 'מחיקה'}</button>}
+                        <div className="flex gap-2">
+                          <button className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-black text-indigo-800 dark:bg-cyan-400/10 dark:text-cyan-200" onClick={() => setEditingUser({ ...user, family_id: user.family_id || '', new_password: '' })} type="button">עריכה ושיוך</button>
+                          {user.is_admin ? <span className="self-center text-xs font-bold text-slate-400">מוגן</span> : <button className="rounded-lg bg-red-50 px-3 py-2 text-xs font-black text-red-700 disabled:opacity-50 dark:bg-red-500/10 dark:text-red-200" disabled={deletingUserId === user.user_id} onClick={() => deleteUser(user)} type="button">{deletingUserId === user.user_id ? 'מוחק...' : 'מחיקה'}</button>}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -221,8 +295,50 @@ export default function AdminPage({ onSessionChange, session }) {
           </div>
         </>
       )}
+      {editingUser ? <UserEditor families={families} onCancel={() => setEditingUser(null)} onChange={setEditingUser} onSubmit={saveUser} saving={savingUser} user={editingUser} /> : null}
     </section>
   )
+}
+
+function UserEditor({ families, onCancel, onChange, onSubmit, saving, user }) {
+  const protectedMembership = user.is_system_admin
+  const update = (field, value) => onChange((current) => ({ ...current, [field]: value }))
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 p-3 sm:items-center" dir="rtl">
+      <form className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-900" onSubmit={onSubmit}>
+        <div className="flex items-start justify-between gap-3">
+          <div><h3 className="text-xl font-black">עריכת משתמש</h3><p className="text-xs text-slate-500 dark:text-slate-400">אפשר לערוך פרטים ולהעביר את המשתמש למשפחה אחרת.</p></div>
+          <button className="rounded-full bg-slate-100 px-3 py-2 font-black dark:bg-slate-800" onClick={onCancel} type="button">✕</button>
+        </div>
+        <div className="mt-5 space-y-4">
+          <AdminField label="שם משתמש"><input className="admin-edit-input" maxLength="40" minLength="2" onChange={(event) => update('username', event.target.value)} required value={user.username} /></AdminField>
+          <AdminField label="אימייל"><input className="admin-edit-input" dir="ltr" onChange={(event) => update('email', event.target.value)} required type="email" value={user.email || ''} /></AdminField>
+          <AdminField label="משפחה">
+            <select className="admin-edit-input" disabled={protectedMembership} onChange={(event) => update('family_id', event.target.value)} value={user.family_id || ''}>
+              <option value="">ללא משפחה</option>
+              {families.map((family) => <option key={family.family_id} value={family.family_id}>{family.family_name}</option>)}
+            </select>
+          </AdminField>
+          <AdminField label="תפקיד">
+            <select className="admin-edit-input" disabled={protectedMembership} onChange={(event) => update('app_role', event.target.value)} value={user.app_role}>
+              <option value="owner">ניהול הבית</option>
+              <option value="shopper">קונה</option>
+            </select>
+          </AdminField>
+          <AdminField label="סיסמה חדשה (לא חובה)"><input autoComplete="new-password" className="admin-edit-input" dir="ltr" minLength="8" onChange={(event) => update('new_password', event.target.value)} placeholder="לפחות 8 תווים" type="password" value={user.new_password} /></AdminField>
+          {protectedMembership ? <p className="rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-800 dark:bg-amber-400/10 dark:text-amber-200">המשפחה והתפקיד של מנהל המערכת מוגנים. עדיין אפשר לשנות שם, אימייל וסיסמה.</p> : null}
+        </div>
+        <div className="mt-6 grid grid-cols-2 gap-2">
+          <button className="h-12 rounded-xl bg-slate-100 font-black dark:bg-slate-800" disabled={saving} onClick={onCancel} type="button">ביטול</button>
+          <button className="h-12 rounded-xl bg-indigo-950 font-black text-white disabled:opacity-50 dark:bg-cyan-400 dark:text-slate-950" disabled={saving} type="submit">{saving ? 'שומר...' : 'שמירה'}</button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+function AdminField({ children, label }) {
+  return <label className="block"><span className="mb-1.5 block text-sm font-black">{label}</span>{children}</label>
 }
 
 function MetricCard({ label, tone, value = 0 }) {

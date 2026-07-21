@@ -1,4 +1,8 @@
 @import "tailwindcss";
+
+@utility admin-edit-input {
+  @apply h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-indigo-500 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:focus:border-cyan-400;
+}
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
