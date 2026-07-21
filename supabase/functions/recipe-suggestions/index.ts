@@ -3,6 +3,7 @@ const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-flash-lite-latest'
 const MAX_INVENTORY_ITEMS = 80
 const MAX_RECIPES = 8
 const MAX_PAGE_BYTES = 1_500_000
+const NON_FOOD_PATTERN = /פדים|איפור|שמפו|מרכך|סבון|חיתולים|מגבונים|שקיות|נייר|בלונים|אקונומיקה|כביסה|דאודורנט|משחת\s*שיניים|כלים\s*חד|פיקדון|פקדון|(?:^|\s)מים(?:\s|$)|shampoo|soap|cleaner|detergent|cosmetic|balloons?/i
 
 type InventoryItem = {
   food_id: string
@@ -57,11 +58,13 @@ Deno.serve(async (request) => {
     }
 
     const candidates = await searchHebrewRecipes(inventory)
+    console.log(JSON.stringify({ event: 'recipe_candidates_ready', count: candidates.length }))
     if (candidates.length === 0) {
       return jsonResponse({ recipes: 0, reason: 'NO_RESULTS' }, 200, corsHeaders)
     }
 
     const recipes = await normalizeRecipes(candidates, inventory.slice(0, MAX_INVENTORY_ITEMS))
+    console.log(JSON.stringify({ event: 'recipes_normalized', count: recipes.length }))
     const saved = await callRpc<number>('cache_family_recipe_suggestions', {
       p_session_token: sessionToken,
       p_recipes: recipes,
@@ -78,25 +81,32 @@ async function searchHebrewRecipes(inventory: InventoryItem[]) {
   if (!apiKey) throw new Error('SerpApi is not configured')
 
   const searchTerms = inventory
-    .filter((item) => item.name && !/מים|water/i.test(item.name))
+    .filter((item) => item.name && !NON_FOOD_PATTERN.test(`${item.name} ${item.manufacturer || ''}`))
+    .sort((a, b) => recipeSearchPriority(a) - recipeSearchPriority(b))
     .slice(0, 6)
-    .map((item) => genericFoodName(item.name))
+    .map((item) => genericFoodName(item.name, item.manufacturer))
     .filter(Boolean)
   const searchQueries = Array.from(new Set([
-    `מתכונים עם ${searchTerms.slice(0, 4).join(' ')}`,
+    ...searchTerms.slice(0, 3).map((term) => `מתכון ${term}`),
     `מתכונים עם ${searchTerms.slice(0, 2).join(' ')}`,
-    `מתכונים עם ${[searchTerms[2], searchTerms[3], searchTerms[0]].filter(Boolean).join(' ')}`,
+    `מתכונים עם ${searchTerms.slice(0, 4).join(' ')}`,
+    ...searchTerms.slice(3, 6).map((term) => `מתכון ${term}`),
   ].filter((query) => query.trim() !== 'מתכונים עם')))
   const detailed: RecipeCandidate[] = []
   const seenUrls = new Set<string>()
 
-  for (const query of searchQueries) {
+  for (const [queryIndex, query] of searchQueries.entries()) {
     const baseCandidates = (await fetchSerpCandidates(query, apiKey))
       .filter((candidate) => !seenUrls.has(candidate.source_url))
+    console.log(JSON.stringify({ event: 'recipe_search_results', query, candidates: baseCandidates.length }))
     for (const candidate of baseCandidates) seenUrls.add(candidate.source_url)
     const enriched = await Promise.all(baseCandidates.map(enrichRecipeCandidate))
-    detailed.push(...enriched.filter((candidate): candidate is RecipeCandidate => candidate !== null))
-    if (detailed.length >= 5) break
+    const validRecipes = enriched.filter((candidate): candidate is RecipeCandidate => candidate !== null)
+    console.log(JSON.stringify({ event: 'recipe_pages_validated', query, valid: validRecipes.length }))
+    detailed.push(...validRecipes)
+    // Always search the first three distinct inventory anchors so one food
+    // cannot fill the entire page with near-identical recipes.
+    if (queryIndex >= 2 && detailed.length >= 5) break
   }
 
   return detailed.slice(0, MAX_RECIPES)
@@ -116,17 +126,18 @@ async function fetchSerpCandidates(query: string, apiKey: string): Promise<Searc
   const payload = await response.json()
   if (payload?.error) throw new Error(`SerpApi: ${String(payload.error).slice(0, 300)}`)
 
-  const results = Array.isArray(payload?.recipes_results) ? payload.recipes_results : []
-  return results.flatMap((result: Record<string, unknown>) => {
-    const rating = Number(result.rating)
+  const recipeResults = Array.isArray(payload?.recipes_results) ? payload.recipes_results : []
+  const organicResults = Array.isArray(payload?.organic_results) ? payload.organic_results : []
+  const candidates = recipeResults.flatMap((result: Record<string, unknown>) => {
+    const parsedRating = Number(result.rating)
     const sourceUrl = cleanString(result.link, 2000)
     const totalTime = parseDurationMinutes(result.total_time)
-    if (!sourceUrl || rating < 4 || !totalTime) return []
+    if (!validRecipeSourceUrl(sourceUrl)) return []
     return [{
       title: cleanString(result.title, 300),
       source_name: cleanString(result.source, 200) || 'מקור המתכון',
       source_url: sourceUrl,
-      rating,
+      rating: Number.isFinite(parsedRating) ? parsedRating : 0,
       reviews: Math.max(0, Number(result.reviews) || 0),
       total_time_minutes: totalTime,
       image_url: cleanString(result.thumbnail, 2000),
@@ -134,21 +145,62 @@ async function fetchSerpCandidates(query: string, apiKey: string): Promise<Searc
         ? result.ingredients.map((item: unknown) => cleanString(item, 300)).filter(Boolean)
         : [],
     }]
+  })
+  candidates.push(...organicResults.flatMap((result: Record<string, unknown>) => {
+    const sourceUrl = cleanString(result.link, 2000)
+    if (!validRecipeSourceUrl(sourceUrl)) return []
+    let sourceName = cleanString(result.source, 200) || cleanString(result.displayed_link, 200)
+    try {
+      sourceName ||= new URL(sourceUrl).hostname.replace(/^www\./, '')
+    } catch {
+      sourceName ||= 'מקור המתכון'
+    }
+    return [{
+      title: cleanString(result.title, 300),
+      source_name: sourceName,
+      source_url: sourceUrl,
+      rating: 0,
+      reviews: 0,
+      total_time_minutes: 0,
+      image_url: cleanString(result.thumbnail, 2000),
+      fallback_ingredients: [],
+    }]
+  }))
+  const seen = new Set<string>()
+  return candidates.filter((candidate) => {
+    if (seen.has(candidate.source_url)) return false
+    seen.add(candidate.source_url)
+    return true
   }).slice(0, MAX_RECIPES)
 }
 
 async function enrichRecipeCandidate(candidate: SearchCandidate): Promise<RecipeCandidate | null> {
   try {
     const structured = await fetchStructuredRecipe(candidate.source_url)
-    if (!structured) return null
-    const rating = Number(structured.aggregateRating?.ratingValue) || candidate.rating
+    if (!structured) {
+      console.log(JSON.stringify({ event: 'recipe_page_missing_structured_data', host: new URL(candidate.source_url).hostname }))
+      return null
+    }
+    const structuredRating = Number(structured.aggregateRating?.ratingValue)
+    const rating = Number.isFinite(structuredRating) && structuredRating > 0
+      ? structuredRating
+      : Number(candidate.rating || 0)
     const totalTime = parseDurationMinutes(structured.totalTime)
       || parseDurationMinutes(structured.prepTime) + parseDurationMinutes(structured.cookTime)
       || candidate.total_time_minutes
     const ingredients = Array.isArray(structured.recipeIngredient)
       ? structured.recipeIngredient.map((item: unknown) => cleanString(item, 500)).filter(Boolean)
       : candidate.fallback_ingredients
-    if (rating < 4 || !totalTime || ingredients.length === 0) return null
+    if (!Number.isFinite(rating) || rating < 4 || !totalTime || ingredients.length === 0) {
+      console.log(JSON.stringify({
+        event: 'recipe_page_rejected',
+        host: new URL(candidate.source_url).hostname,
+        rating: Number.isFinite(rating) ? rating : null,
+        total_time: totalTime,
+        ingredients: ingredients.length,
+      }))
+      return null
+    }
     return {
       external_key: await sha256(candidate.source_url),
       title: cleanString(structured.name, 300) || candidate.title,
@@ -161,7 +213,12 @@ async function enrichRecipeCandidate(candidate: SearchCandidate): Promise<Recipe
       servings: parseServings(structured.recipeYield),
       ingredient_lines: ingredients.slice(0, 40),
     }
-  } catch {
+  } catch (error) {
+    console.log(JSON.stringify({
+      event: 'recipe_page_failed',
+      host: safeHostname(candidate.source_url),
+      error: error instanceof Error ? error.message.slice(0, 160) : 'unknown',
+    }))
     return null
   }
 }
@@ -219,9 +276,13 @@ async function normalizeRecipes(candidates: RecipeCandidate[], inventory: Invent
     'Keep recipe titles and ingredient names in clear Hebrew.',
     'For each ingredient, match food_id only to the exact compatible inventory product.',
     'Brand differences may be ignored for generic cooking ingredients, but do not match different foods or flavors.',
+    'Treat common Hebrew ingredient synonyms and harmless descriptions as equivalent: בטטה is תפוח אדמה מתוק; בשר טחון can match בקר טחון; singular and plural forms match; size words such as קטן, בינוני, and גדול do not change the food.',
+    'A generic recipe ingredient may match a branded inventory product when the underlying food is the same.',
     'Convert the required recipe amount into the number of inventory packages represented by inventory.unit_qty.',
     'Example: 500 grams required and a matched 1 kilogram package means inventory_quantity_required=0.5.',
     'If inventory.unit_qty is יחידה, match a recipe count directly to inventory units.',
+    'Parse Hebrew and symbolic fractions exactly: חצי or ½ is 0.5, רבע or ¼ is 0.25, and שלושת רבעי or ¾ is 0.75.',
+    'When one produce unit is available and the recipe needs half a unit, inventory_quantity_required must be 0.5 and the ingredient is matched.',
     'If the conversion cannot be calculated safely, return an empty food_id and inventory_quantity_required=0.',
     'Never invent an amount that is absent from required_text.',
     'Mark ingredients explicitly described as optional as optional=true.',
@@ -372,8 +433,49 @@ function structuredImage(value: unknown) {
   return ''
 }
 
-function genericFoodName(value: string) {
-  return value.replace(/\b\d+(?:[.,]\d+)?\b/g, '').replace(/[×x]\s*\d+/gi, '').replace(/\s+/g, ' ').trim()
+function genericFoodName(value: string, manufacturer = '') {
+  let result = value
+    .replace(/\b\d+(?:[.,]\d+)?\b/g, '')
+    .replace(/[×x]\s*\d+/gi, '')
+    .replace(/ק["״']?ג|קילו(?:גרם)?|גרם|מ["״']?ל|ליטר|יחידות?|אריזה|טרי|קפוא/gi, ' ')
+  for (const word of manufacturer.split(/\s+/).filter((part) => part.length >= 3)) {
+    result = result.replace(new RegExp(escapeRegExp(word), 'gi'), ' ')
+  }
+  return result.replace(/\s+/g, ' ').trim()
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function recipeSearchPriority(item: InventoryItem) {
+  const value = `${item.category || ''} ${item.name || ''}`
+  if (/בשר|דגים|עוף|קטניות|דגנים|פסטה|אורז/i.test(value)) return 0
+  if (/פירות|ירקות|ביצים|חלב|גבינ/i.test(value)) return 1
+  if (/בישול|אפייה|שימורים/i.test(value)) return 2
+  if (/חטיפים|ממתקים|משקאות/i.test(value)) return 5
+  return 3
+}
+
+function validRecipeSourceUrl(value: string) {
+  if (!value) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:'
+      && !unsafeHostname(url.hostname)
+      && !/youtube\.com|youtu\.be|facebook\.com|instagram\.com|tiktok\.com/i.test(url.hostname)
+      && !/\.pdf(?:$|\?)/i.test(url.pathname)
+  } catch {
+    return false
+  }
+}
+
+function safeHostname(value: string) {
+  try {
+    return new URL(value).hostname
+  } catch {
+    return 'invalid'
+  }
 }
 
 function unsafeHostname(hostname: string) {

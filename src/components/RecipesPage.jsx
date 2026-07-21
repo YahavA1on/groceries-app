@@ -139,6 +139,7 @@ export default function RecipesPage({ session }) {
 }
 
 function RecipeCard({ inventoryByFoodId, onChoose, recipe }) {
+  const [expanded, setExpanded] = useState(false)
   const ingredients = normalizedIngredients(recipe.ingredients)
   const availability = recipeAvailability(ingredients, inventoryByFoodId)
   return (
@@ -163,12 +164,27 @@ function RecipeCard({ inventoryByFoodId, onChoose, recipe }) {
             {availability.ready ? 'כל המרכיבים זמינים' : `${availability.missing} מרכיבים חסרים`}
           </span>
         </div>
-        <div className="mt-4 space-y-2">
-          {ingredients.map((ingredient, index) => <IngredientStatus ingredient={ingredient} inventoryByFoodId={inventoryByFoodId} key={`${ingredient.name}:${index}`} />)}
-        </div>
-        <button className="mt-4 w-full rounded-2xl bg-rose-600 px-4 py-3 font-black text-white disabled:bg-slate-200 disabled:text-slate-500 dark:disabled:bg-slate-800" disabled={!availability.ready} onClick={onChoose} type="button">
-          {availability.ready ? 'בחירת מתכון' : 'חסרים מרכיבים לבחירה'}
+        <button
+          aria-expanded={expanded}
+          className="mt-4 flex w-full items-center justify-between rounded-2xl bg-slate-100 px-4 py-3 font-black text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+          onClick={() => setExpanded((value) => !value)}
+          type="button"
+        >
+          <span>{expanded ? 'הסתרת מרכיבים' : 'הצגת מרכיבים'}</span>
+          <svg aria-hidden="true" className={`h-5 w-5 transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
         </button>
+        {expanded ? (
+          <div className="mt-4">
+            <div className="space-y-2">
+              {ingredients.map((ingredient, index) => <IngredientStatus ingredient={ingredient} inventoryByFoodId={inventoryByFoodId} key={`${ingredient.name}:${index}`} />)}
+            </div>
+            <button className="mt-4 w-full rounded-2xl bg-rose-600 px-4 py-3 font-black text-white disabled:bg-slate-200 disabled:text-slate-500 dark:disabled:bg-slate-800" disabled={!availability.ready} onClick={onChoose} type="button">
+              {availability.ready ? 'בחירת מתכון' : 'חסרים מרכיבים לבחירה'}
+            </button>
+          </div>
+        ) : null}
       </div>
     </article>
   )
@@ -230,7 +246,7 @@ function ingredientAvailability(ingredient, inventoryByFoodId) {
   const packageText = row.food?.unit_qty ? ` · ${row.food.unit_qty} ליחידה` : ''
   return {
     enough,
-    availableText: `יש x${formatNumber(available)}${packageText}${required > 0 ? ` · נדרש x${formatNumber(required)}` : ''}`,
+    availableText: `יש x${formatNumber(available)}${packageText}${required > 0 ? ` · נדרש x${formatNumber(required)}` : ''}${enough ? ` · יישאר x${formatNumber(Math.max(0, available - required))}` : ''}`,
   }
 }
 
