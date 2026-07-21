@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { changePassword, updateProfile } from '../lib/auth'
+import PushNotificationSettings from './PushNotificationSettings'
 
 const FAMILY_PREFIX = 'הבית של משפחת '
 
@@ -96,6 +97,8 @@ export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionC
           <Message text={passwordMessage} />
           <button className={primaryButton} disabled={passwordBusy || !currentPassword || newPassword.length < 8 || confirmPassword.length < 8} type="submit">{passwordBusy ? 'משנה...' : 'שינוי סיסמה'}</button>
         </form>
+
+        <PushNotificationSettings session={session} />
 
         <button className="mt-4 h-12 w-full rounded-xl bg-rose-100 font-black text-rose-800 dark:bg-rose-500/20 dark:text-rose-100" onClick={onLogout} type="button">יציאה מהחשבון</button>
       </section>

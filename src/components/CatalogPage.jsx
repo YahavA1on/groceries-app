@@ -6,6 +6,7 @@ import { DEFAULT_MANUFACTURER, addInventoryQuantities, addShoppingListItems, app
 import { ALL_CATEGORIES, buildCategoryOptions, getFoodCategory, groupFoodsByRank, groupFoodsByRatingMood, groupItemsByCategory, matchesFoodFilters, rankMetaForRating, ratingColorClass, visibleUniqueFoods } from '../lib/foodFilters'
 import { isRateableFood } from '../lib/productRules'
 import { supabase } from '../lib/supabase'
+import { sendPushEvent } from '../lib/pushNotifications'
 
 export default function CatalogPage({ onSubmitted, session }) {
   const { addProduct, changeQuantity, clearCart, count, items, lineItems, removeProduct } = useCart()
@@ -123,6 +124,7 @@ export default function CatalogPage({ onSubmitted, session }) {
       return
     }
 
+    void sendPushEvent(session, 'request', rows.map((row) => row.food_id)).catch(() => {})
     clearCart()
     setSuccess('המוצרים נוספו לרשימת הקניות.')
     onSubmitted?.()

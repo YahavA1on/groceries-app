@@ -5,6 +5,7 @@ import TopNotice from './TopNotice'
 import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchRatingsByOwner, fetchShoppingListItems, finishFamilyShopping, setShoppingItemCart, updateFoodUnitQuantity } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRatingMood } from '../lib/foodFilters'
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
+import { sendPushEvent } from '../lib/pushNotifications'
 
 export default function FulfillmentPage({ session }) {
   const [items, setItems] = useState([])
@@ -95,6 +96,7 @@ export default function FulfillmentPage({ session }) {
       return
     }
 
+    void sendPushEvent(session, 'purchased', allCartItems.map((item) => item.food_id)).catch(() => {})
     setSuccess(`הקניות הסתיימו. עודכנו ${data ?? allCartItems.length} פריטים.`)
     await loadItems()
   }
