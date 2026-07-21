@@ -234,7 +234,9 @@ async function fetchStructuredRecipe(value: string) {
   if (!response.ok) throw new Error(`Recipe page returned ${response.status}`)
   const declaredLength = Number(response.headers.get('content-length') || 0)
   if (declaredLength > MAX_PAGE_BYTES) throw new Error('Recipe page is too large')
-  const html = (await response.text()).slice(0, MAX_PAGE_BYTES)
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  if (bytes.byteLength > MAX_PAGE_BYTES) throw new Error('Recipe page is too large')
+  const html = decodeRecipePage(bytes, response.headers.get('content-type') || '')
   const scripts = html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)
   for (const match of scripts) {
     try {
@@ -318,12 +320,13 @@ async function normalizeRecipes(candidates: RecipeCandidate[], inventory: Invent
   const normalizedRecipes = candidates.flatMap((candidate, index) => {
     const result = normalized.find((item: Record<string, unknown>) => Number(item.recipe_index) === index)
     if (!result || !Array.isArray(result.ingredients)) return []
-    const ingredients = result.ingredients.slice(0, 40).map((item: Record<string, unknown>) => {
+    const ingredients = result.ingredients.slice(0, 40).map((item: Record<string, unknown>, ingredientIndex: number) => {
       const foodId = cleanString(item.food_id, 100)
       const requiredQuantity = Number(item.inventory_quantity_required)
+      const originalLine = safeText(candidate.ingredient_lines?.[ingredientIndex], '', 500)
       return {
-        name: cleanString(item.name, 200),
-        required_text: cleanString(item.required_text, 500),
+        name: safeText(item.name, originalLine || `מרכיב ${ingredientIndex + 1}`, 200),
+        required_text: safeText(item.required_text, originalLine || 'הכמות לא צוינה במקור', 500),
         food_id: inventoryIds.has(foodId) && requiredQuantity > 0 ? foodId : '',
         inventory_quantity_required: inventoryIds.has(foodId) && requiredQuantity > 0 ? requiredQuantity : 0,
         optional: Boolean(item.optional),
@@ -341,7 +344,7 @@ async function normalizeRecipes(candidates: RecipeCandidate[], inventory: Invent
       : 0
     return [{
       ...candidate,
-      title: cleanString(result.title, 300) || candidate.title,
+      title: safeText(result.title, safeText(candidate.title, 'שם המתכון אינו זמין', 300), 300),
       ingredient_lines: undefined,
       ingredients,
       inventory_match_percent: inventoryMatchPercent,
@@ -484,7 +487,55 @@ function unsafeHostname(hostname: string) {
 }
 
 function decodeHtml(value: string) {
-  return value.replace(/&quot;/g, '"').replace(/&#34;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_match, digits) => decodeCodePoint(Number.parseInt(digits, 16)))
+    .replace(/&#(\d+);/g, (_match, digits) => decodeCodePoint(Number.parseInt(digits, 10)))
+    .replace(/&quot;/gi, '"')
+    .replace(/&amp;/gi, '&')
+    .replace(/&apos;|&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&nbsp;/gi, ' ')
+}
+
+function decodeCodePoint(value: number) {
+  try {
+    return Number.isInteger(value) && value >= 0 && value <= 0x10ffff ? String.fromCodePoint(value) : ''
+  } catch {
+    return ''
+  }
+}
+
+function decodeRecipePage(bytes: Uint8Array, contentType: string) {
+  const declaredCharset = contentType.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1]
+  const labels = [...new Set([declaredCharset, 'utf-8', 'windows-1255', 'iso-8859-8'].filter(Boolean) as string[])]
+  const decoded = labels.flatMap((label, index) => {
+    try {
+      const text = new TextDecoder(label, { fatal: false }).decode(bytes)
+      return [{ text, score: brokenTextScore(text) + index / 100 }]
+    } catch {
+      return []
+    }
+  })
+  decoded.sort((left, right) => left.score - right.score)
+  return (decoded[0]?.text || new TextDecoder().decode(bytes)).slice(0, MAX_PAGE_BYTES)
+}
+
+function brokenTextScore(value: string) {
+  const replacementCharacters = (value.match(/\uFFFD/g) || []).length
+  const mojibakeSequences = (value.match(/[ÃÂ][\u0080-\u00ff]|ï¿½/g) || []).length
+  const brokenHebrewSequences = (value.match(/×/g) || []).length
+  const controlCharacters = (value.match(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g) || []).length
+  return replacementCharacters * 1000 + mojibakeSequences * 50 + brokenHebrewSequences * 20 + controlCharacters * 10
+}
+
+function hasBrokenText(value: string) {
+  return /\uFFFD|ï¿½|(?:\?\s*){3,}/.test(value)
+}
+
+function safeText(value: unknown, fallback: string, maxLength: number) {
+  const text = cleanString(value, maxLength)
+  return text && !hasBrokenText(text) ? text : cleanString(fallback, maxLength)
 }
 
 async function sha256(value: string) {

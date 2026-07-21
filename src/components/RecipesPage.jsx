@@ -142,14 +142,16 @@ function RecipeCard({ inventoryByFoodId, onChoose, recipe }) {
   const [expanded, setExpanded] = useState(false)
   const ingredients = normalizedIngredients(recipe.ingredients)
   const availability = recipeAvailability(ingredients, inventoryByFoodId)
+  const recipeTitle = safeDisplayText(recipe.title, 'שם המתכון אינו זמין')
+  const sourceName = safeDisplayText(recipe.source_name, 'מקור המתכון')
   return (
     <article className="overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-orange-100 dark:bg-slate-900 dark:ring-slate-800">
       {recipe.image_url ? <img alt="" className="h-44 w-full object-cover" src={recipe.image_url} /> : null}
       <div className="p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <h3 className="text-xl font-black leading-tight">{recipe.title}</h3>
-            <a className="mt-1 inline-block text-xs font-bold text-slate-500 underline dark:text-slate-400" href={recipe.source_url} rel="noreferrer" target="_blank">{recipe.source_name}</a>
+            <h3 className="text-xl font-black leading-tight">{recipeTitle}</h3>
+            <a className="mt-1 inline-block text-xs font-bold text-slate-500 underline dark:text-slate-400" href={recipe.source_url} rel="noreferrer" target="_blank">{sourceName}</a>
           </div>
           <div className="shrink-0 rounded-2xl bg-amber-100 px-3 py-2 text-center text-amber-900 dark:bg-amber-400/20 dark:text-amber-200">
             <p className="font-black">⭐ {formatNumber(recipe.rating)}</p>
@@ -207,11 +209,12 @@ function IngredientStatus({ ingredient, inventoryByFoodId }) {
 }
 
 function RecipeConfirmation({ busy, inventoryByFoodId, onCancel, onConfirm, recipe }) {
+  const recipeTitle = safeDisplayText(recipe.title, 'המתכון שנבחר')
   return (
     <div className="app-modal-overlay bg-slate-950/65" dir="rtl">
       <div className="app-modal-panel rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-900">
         <h3 className="text-2xl font-black">לבחור את המתכון?</h3>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">הכמויות הבאות יופחתו מיד מהמלאי עבור „{recipe.title}”.</p>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">הכמויות הבאות יופחתו מיד מהמלאי עבור „{recipeTitle}”.</p>
         <div className="mt-4 space-y-2">
           {normalizedIngredients(recipe.ingredients).filter((item) => !item.optional).map((ingredient, index) => {
             const row = inventoryByFoodId.get(ingredient.food_id)
@@ -233,7 +236,17 @@ function RecipeConfirmation({ busy, inventoryByFoodId, onCancel, onConfirm, reci
 }
 
 function normalizedIngredients(value) {
-  return Array.isArray(value) ? value : []
+  if (!Array.isArray(value)) return []
+  return value.map((ingredient, index) => ({
+    ...ingredient,
+    name: safeDisplayText(ingredient?.name, `מרכיב ${index + 1}`),
+    required_text: safeDisplayText(ingredient?.required_text, 'הכמות לא צוינה במקור'),
+  }))
+}
+
+function safeDisplayText(value, fallback) {
+  const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''
+  return text && !/\uFFFD|ï¿½|(?:\?\s*){3,}/.test(text) ? text : fallback
 }
 
 function ingredientAvailability(ingredient, inventoryByFoodId) {
