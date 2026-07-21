@@ -1,0 +1,203 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import TopNotice from './TopNotice'
+import { fetchAdminDashboard } from '../lib/adminData'
+import { replaceStateWhenChanged } from '../lib/stateUpdates'
+import { userErrorMessage } from '../lib/userErrors'
+
+const activityTypes = [
+  { key: 'all', label: 'הכול' },
+  { key: 'shopping', label: 'רשימות' },
+  { key: 'inventory', label: 'מלאי' },
+  { key: 'accounts', label: 'חשבונות' },
+  { key: 'catalog', label: 'מוצרים' },
+]
+
+export default function AdminPage({ session }) {
+  const [summary, setSummary] = useState({})
+  const [families, setFamilies] = useState([])
+  const [activity, setActivity] = useState([])
+  const [familyId, setFamilyId] = useState('')
+  const [activityType, setActivityType] = useState('all')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const loadDashboard = useCallback(async () => {
+    const result = await fetchAdminDashboard(session, familyId)
+    if (result.error) {
+      setError(userErrorMessage(result.error))
+    } else {
+      setError('')
+      replaceStateWhenChanged(setSummary, result.data.summary)
+      replaceStateWhenChanged(setFamilies, result.data.families)
+      replaceStateWhenChanged(setActivity, result.data.activity)
+    }
+    setLoading(false)
+  }, [familyId, session])
+
+  useEffect(() => {
+    const timeoutId = setTimeout(loadDashboard, 0)
+    const intervalId = setInterval(loadDashboard, 15_000)
+    return () => {
+      clearTimeout(timeoutId)
+      clearInterval(intervalId)
+    }
+  }, [loadDashboard])
+
+  const visibleActivity = useMemo(
+    () => activity.filter((item) => activityType === 'all' || activityGroup(item.entity_type) === activityType),
+    [activity, activityType]
+  )
+
+  return (
+    <section className="space-y-4">
+      <TopNotice notice={error ? { tone: 'error', text: error } : null} onDismiss={() => setError('')} />
+
+      <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-indigo-950 to-cyan-950 p-5 text-white shadow-xl">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-300">Admin</p>
+        <h2 className="mt-1 text-3xl font-black">מרכז הניהול</h2>
+        <p className="mt-2 text-sm text-slate-300">תמונה חיה של המשפחות, המשתמשים והפעילות באתר.</p>
+        <div className="mt-4 flex items-center gap-2 text-xs font-bold text-emerald-300">
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-400" />
+          מתעדכן בשקט כל 15 שניות
+        </div>
+      </div>
+
+      {loading ? <AdminLoading /> : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <MetricCard label="משפחות" value={summary.families} tone="cyan" />
+            <MetricCard label="משתמשים" value={summary.users} tone="rose" />
+            <MetricCard label="בקשות פתוחות" value={summary.pending_requests} tone="amber" />
+            <MetricCard label="פעילים היום" value={summary.active_users_24h} tone="emerald" />
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-black">מצב המשפחות</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{summary.products || 0} מוצרים במאגר · {summary.purchases_7d || 0} קניות השבוע</p>
+              </div>
+              <span className="rounded-xl bg-cyan-100 px-3 py-2 text-xs font-black text-cyan-950 dark:bg-cyan-400 dark:text-slate-950">{families.length}</span>
+            </div>
+            <div className="mt-3 flex snap-x gap-3 overflow-x-auto pb-1">
+              {families.map((family) => (
+                <button
+                  className={`min-w-[13rem] snap-start rounded-2xl border p-3 text-right transition ${familyId === family.family_id ? 'border-rose-500 bg-rose-50 dark:border-cyan-400 dark:bg-cyan-400/10' : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800'}`}
+                  key={family.family_id}
+                  onClick={() => setFamilyId((current) => current === family.family_id ? '' : family.family_id)}
+                  type="button"
+                >
+                  <p className="truncate font-black">{family.family_name}</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{family.member_count} משתמשים · {family.inventory_products} במלאי</p>
+                  <div className="mt-3 flex items-center justify-between text-xs font-bold">
+                    <span className="text-amber-700 dark:text-amber-300">{family.pending_requests} בקשות</span>
+                    <span className="text-emerald-700 dark:text-emerald-300">{family.purchases_7d} נקנו השבוע</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-black">פעילות אחרונה</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{familyId ? families.find((family) => family.family_id === familyId)?.family_name : 'כל המשפחות'}</p>
+              </div>
+              <select className="h-10 max-w-[10rem] rounded-xl border border-slate-200 bg-slate-50 px-2 text-sm font-bold outline-none dark:border-slate-700 dark:bg-slate-800" onChange={(event) => setFamilyId(event.target.value)} value={familyId}>
+                <option value="">כל המשפחות</option>
+                {families.map((family) => <option key={family.family_id} value={family.family_id}>{family.family_name}</option>)}
+              </select>
+            </div>
+
+            <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+              {activityTypes.map((type) => (
+                <button className={`shrink-0 rounded-xl px-3 py-2 text-xs font-black ${activityType === type.key ? 'bg-slate-950 text-white dark:bg-cyan-400 dark:text-slate-950' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`} key={type.key} onClick={() => setActivityType(type.key)} type="button">{type.label}</button>
+              ))}
+            </div>
+
+            <div className="mt-3 space-y-2">
+              {visibleActivity.length === 0 ? <p className="rounded-xl bg-slate-50 p-5 text-center text-sm text-slate-500 dark:bg-slate-800">אין פעילות להצגה.</p> : visibleActivity.map((item) => <ActivityRow item={item} key={item.activity_id} />)}
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+function MetricCard({ label, tone, value = 0 }) {
+  const tones = {
+    cyan: 'bg-cyan-50 text-cyan-950 dark:bg-cyan-400/10 dark:text-cyan-200',
+    rose: 'bg-rose-50 text-rose-950 dark:bg-rose-500/10 dark:text-rose-200',
+    amber: 'bg-amber-50 text-amber-950 dark:bg-amber-400/10 dark:text-amber-200',
+    emerald: 'bg-emerald-50 text-emerald-950 dark:bg-emerald-400/10 dark:text-emerald-200',
+  }
+  return <div className={`rounded-2xl p-4 shadow-sm ${tones[tone]}`}><p className="text-3xl font-black">{value}</p><p className="mt-1 text-xs font-bold opacity-75">{label}</p></div>
+}
+
+function ActivityRow({ item }) {
+  const meta = activityMeta(item)
+  return (
+    <article className="flex gap-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-800">
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-lg ${meta.color}`}>{meta.icon}</span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <p className="font-black leading-tight">{meta.title}</p>
+          <time className="shrink-0 text-[0.7rem] font-bold text-slate-400" dateTime={item.occurred_at}>{relativeTime(item.occurred_at)}</time>
+        </div>
+        <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{item.actor_name} · {item.family_name}</p>
+        {meta.detail ? <p className="mt-1 line-clamp-2 text-xs font-bold text-slate-600 dark:text-slate-300">{meta.detail}</p> : null}
+      </div>
+    </article>
+  )
+}
+
+function activityMeta(item) {
+  const detail = item.details || {}
+  const food = detail.food_name || detail.name || 'מוצר'
+  const deleted = item.action === 'delete'
+  const updated = item.action === 'update'
+  const map = {
+    shopping_list: { icon: '📝', title: deleted ? 'הוסרה בקשה' : updated ? 'עודכנה בקשה' : 'נוספה בקשה', detail: `${food}${detail.quantity ? ` · כמות ${detail.quantity}` : ''}`, color: 'bg-amber-100 dark:bg-amber-400/20' },
+    inventory_additions: { icon: '📦', title: 'מוצר נוסף למלאי', detail: `${food}${detail.quantity ? ` · כמות ${detail.quantity}` : ''}`, color: 'bg-cyan-100 dark:bg-cyan-400/20' },
+    inventory: { icon: '📊', title: deleted ? 'מוצר הוסר מהמלאי' : 'המלאי עודכן', detail: `${food}${detail.quantity ? ` · כמות ${detail.quantity}` : ''}`, color: 'bg-cyan-100 dark:bg-cyan-400/20' },
+    purchases: { icon: '🛒', title: 'מוצר נקנה', detail: `${food}${detail.quantity ? ` · כמות ${detail.quantity}` : ''}`, color: 'bg-emerald-100 dark:bg-emerald-400/20' },
+    shopping_notes: { icon: '💬', title: deleted ? 'הערה נמחקה' : 'נוספה הערה', detail: detail.body, color: 'bg-indigo-100 dark:bg-indigo-400/20' },
+    ratings: { icon: '⭐', title: deleted ? 'דירוג נמחק' : 'מוצר דורג', detail: detail.rating ? `דירוג ${detail.rating}` : food, color: 'bg-yellow-100 dark:bg-yellow-400/20' },
+    foods: { icon: '🏷️', title: deleted ? 'מוצר נמחק מהמאגר' : updated ? 'מוצר עודכן' : 'מוצר נוסף למאגר', detail: food, color: 'bg-rose-100 dark:bg-rose-400/20' },
+    users: { icon: '👤', title: updated ? 'חשבון עודכן' : 'משתמש חדש נרשם', detail: detail.username, color: 'bg-violet-100 dark:bg-violet-400/20' },
+    sessions: { icon: '🔐', title: deleted ? 'משתמש התנתק' : 'משתמש התחבר', detail: '', color: 'bg-slate-200 dark:bg-slate-700' },
+    families: { icon: '🏠', title: deleted ? 'משפחה נמחקה' : updated ? 'משפחה עודכנה' : 'משפחה חדשה נוצרה', detail: detail.name, color: 'bg-orange-100 dark:bg-orange-400/20' },
+    family_members: { icon: '👥', title: deleted ? 'משתמש עזב משפחה' : 'משתמש הצטרף למשפחה', detail: detail.member_role === 'shopper' ? 'קונה' : 'ניהול הבית', color: 'bg-teal-100 dark:bg-teal-400/20' },
+    imported_receipts: { icon: '🧾', title: 'קבלה נסרקה', detail: '', color: 'bg-blue-100 dark:bg-blue-400/20' },
+    push_subscriptions: { icon: '🔔', title: deleted ? 'התראות כובו' : 'התראות הופעלו', detail: '', color: 'bg-pink-100 dark:bg-pink-400/20' },
+    admin_audit_log: { icon: '🛡️', title: 'פעולת מנהל', detail: detail.action, color: 'bg-red-100 dark:bg-red-400/20' },
+  }
+  return map[item.entity_type] || { icon: '•', title: 'פעילות באתר', detail: item.entity_type, color: 'bg-slate-100 dark:bg-slate-700' }
+}
+
+function activityGroup(entityType) {
+  if (['shopping_list', 'shopping_notes', 'purchases', 'imported_receipts'].includes(entityType)) return 'shopping'
+  if (['inventory', 'inventory_additions', 'ratings'].includes(entityType)) return 'inventory'
+  if (['users', 'sessions', 'families', 'family_members', 'push_subscriptions'].includes(entityType)) return 'accounts'
+  if (['foods', 'admin_audit_log'].includes(entityType)) return 'catalog'
+  return 'all'
+}
+
+function relativeTime(value) {
+  const timestamp = new Date(value).getTime()
+  if (!Number.isFinite(timestamp)) return ''
+  const seconds = Math.round((timestamp - Date.now()) / 1000)
+  const formatter = new Intl.RelativeTimeFormat('he', { numeric: 'auto' })
+  if (Math.abs(seconds) < 60) return formatter.format(seconds, 'second')
+  const minutes = Math.round(seconds / 60)
+  if (Math.abs(minutes) < 60) return formatter.format(minutes, 'minute')
+  const hours = Math.round(minutes / 60)
+  if (Math.abs(hours) < 24) return formatter.format(hours, 'hour')
+  return formatter.format(Math.round(hours / 24), 'day')
+}
+
+function AdminLoading() {
+  return <div className="grid grid-cols-2 gap-3">{Array.from({ length: 4 }, (_, index) => <div className="h-24 animate-pulse rounded-2xl bg-slate-200 dark:bg-slate-800" key={index} />)}</div>
+}

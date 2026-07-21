@@ -5,6 +5,7 @@ import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchInventoryRows, fetchRat
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRank, groupRowsByRatingMood } from '../lib/foodFilters'
 import { formatDate } from '../lib/format'
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
+import { userErrorMessage } from '../lib/userErrors'
 
 export default function InventoryPage({ session }) {
   const [rows, setRows] = useState([])
@@ -26,7 +27,7 @@ export default function InventoryPage({ session }) {
     ])
 
     if (inventoryResult.error) {
-      setNotice({ tone: 'error', text: inventoryResult.error.message })
+      setNotice({ tone: 'error', text: userErrorMessage(inventoryResult.error) })
       setRows([])
     } else {
       replaceStateWhenChanged(setRows, sortInventoryRows(inventoryResult.data || []))
@@ -76,7 +77,7 @@ export default function InventoryPage({ session }) {
       await loadInventory()
       setNotice({ tone: 'success', text: nextQuantity <= 0 ? 'המוצר הוסר מהמלאי.' : 'הכמות עודכנה.' })
     } catch (quantityError) {
-      setNotice({ tone: 'error', text: quantityError.message })
+      setNotice({ tone: 'error', text: userErrorMessage(quantityError) })
     } finally {
       setAdjustingKey('')
     }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { enablePushNotifications, getPushSubscription, hasAnsweredPushPrompt, pushCapability, rememberPushPromptChoice } from '../lib/pushNotifications'
+import { userErrorMessage } from '../lib/userErrors'
 
 export default function PushNotificationPrompt({ session }) {
   const [visible, setVisible] = useState(false)
@@ -43,7 +44,7 @@ export default function PushNotificationPrompt({ session }) {
       await enablePushNotifications(session)
       setVisible(false)
     } catch (error) {
-      setMessage(error.message || 'לא ניתן להפעיל התראות כרגע.')
+      setMessage(userErrorMessage(error, 'לא ניתן להפעיל התראות כרגע.'))
       if (Notification.permission === 'denied') rememberPushPromptChoice(session, 'denied')
     } finally {
       setBusy(false)

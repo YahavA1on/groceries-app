@@ -5,7 +5,7 @@ import PushNotificationSettings from './PushNotificationSettings'
 const FAMILY_PREFIX = 'הבית של משפחת '
 
 export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionChange, session }) {
-  const canRenameFamily = session.member_role === 'manager' || session.is_admin
+  const canRenameFamily = Boolean(session.family_id) && (session.member_role === 'manager' || session.is_admin)
   const initialSurname = session.family_name?.startsWith(FAMILY_PREFIX)
     ? session.family_name.slice(FAMILY_PREFIX.length)
     : ''
@@ -98,7 +98,7 @@ export default function ProfileSheet({ familyCode, onClose, onLogout, onSessionC
           <button className={primaryButton} disabled={passwordBusy || !currentPassword || newPassword.length < 8 || confirmPassword.length < 8} type="submit">{passwordBusy ? 'משנה...' : 'שינוי סיסמה'}</button>
         </form>
 
-        <PushNotificationSettings session={session} />
+        {session.family_id ? <PushNotificationSettings session={session} /> : null}
 
         <button className="mt-4 h-12 w-full rounded-xl bg-rose-100 font-black text-rose-800 dark:bg-rose-500/20 dark:text-rose-100" onClick={onLogout} type="button">יציאה מהחשבון</button>
       </section>

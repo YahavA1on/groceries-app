@@ -6,6 +6,7 @@ import { DEFAULT_MANUFACTURER, applyRelatedRatings, fetchRatingsByOwner, fetchSh
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupItemsByCategory, groupRowsByRatingMood } from '../lib/foodFilters'
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
 import { sendPushEvent } from '../lib/pushNotifications'
+import { userErrorMessage } from '../lib/userErrors'
 
 export default function FulfillmentPage({ session }) {
   const [items, setItems] = useState([])
@@ -33,7 +34,7 @@ export default function FulfillmentPage({ session }) {
     ])
 
     if (listRes.error) {
-      setError(listRes.error.message)
+      setError(userErrorMessage(listRes.error))
       setItems([])
     } else {
       replaceStateWhenChanged(setItems, listRes.data || [])
@@ -74,7 +75,7 @@ export default function FulfillmentPage({ session }) {
 
     if (updateError) {
       setItems(previousItems)
-      setError(updateError.message)
+      setError(userErrorMessage(updateError))
       return
     }
 
@@ -92,7 +93,7 @@ export default function FulfillmentPage({ session }) {
     setFinishing(false)
 
     if (rpcError) {
-      setError(rpcError.message)
+      setError(userErrorMessage(rpcError))
       return
     }
 
@@ -114,7 +115,7 @@ export default function FulfillmentPage({ session }) {
     const { error: updateError } = await updateFoodUnitQuantity(session, editingWeightItem.food_id, weightValue)
     setWeightBusy(false)
     if (updateError) {
-      setError(updateError.message)
+      setError(userErrorMessage(updateError))
       return
     }
     setItems((current) => current.map((item) => (

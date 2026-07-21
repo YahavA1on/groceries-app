@@ -8,6 +8,7 @@ import { isRateableFood } from '../lib/productRules'
 import { findEquivalentCatalogFood } from '../lib/receiptApi'
 import { supabase } from '../lib/supabase'
 import { sendPushEvent } from '../lib/pushNotifications'
+import { userErrorMessage } from '../lib/userErrors'
 
 export default function CatalogPage({ onSubmitted, session }) {
   const { addProduct, changeQuantity, clearCart, count, items, lineItems, removeProduct } = useCart()
@@ -41,7 +42,7 @@ export default function CatalogPage({ onSubmitted, session }) {
     const loadedFoods = foodsResult.data || []
 
     if (foodsResult.error) {
-      setError(foodsResult.error.message)
+      setError(userErrorMessage(foodsResult.error))
       setFoods([])
     } else {
       setFoods(loadedFoods)
@@ -101,7 +102,7 @@ export default function CatalogPage({ onSubmitted, session }) {
         )
       } catch (inventoryError) {
         setSubmitting(false)
-        setError(inventoryError.message)
+        setError(userErrorMessage(inventoryError))
         return
       }
 
@@ -121,7 +122,7 @@ export default function CatalogPage({ onSubmitted, session }) {
     setSubmitting(false)
 
     if (upsertError) {
-      setError(upsertError.message)
+      setError(userErrorMessage(upsertError))
       return
     }
 
@@ -159,7 +160,7 @@ export default function CatalogPage({ onSubmitted, session }) {
     setRatingFoodId(null)
 
     if (ratingError) {
-      setError(ratingError.message)
+      setError(userErrorMessage(ratingError))
       return false
     }
 
@@ -228,7 +229,7 @@ export default function CatalogPage({ onSubmitted, session }) {
 
     if (updateError) {
       setEditingBusy(false)
-      setError(updateError.code === '23505' ? 'המוצר כבר קיים.' : updateError.message)
+      setError(updateError.code === '23505' ? 'המוצר כבר קיים.' : userErrorMessage(updateError))
       return
     }
 
@@ -237,7 +238,7 @@ export default function CatalogPage({ onSubmitted, session }) {
 
       if (deleteRatingError) {
         setEditingBusy(false)
-        setError(deleteRatingError.message)
+        setError(userErrorMessage(deleteRatingError))
         return
       }
 
@@ -277,7 +278,7 @@ export default function CatalogPage({ onSubmitted, session }) {
 
     if (deleteError) {
       setEditingBusy(false)
-      setError(deleteError.message)
+      setError(userErrorMessage(deleteError))
       return
     }
 
@@ -328,7 +329,7 @@ export default function CatalogPage({ onSubmitted, session }) {
     setEditingBusy(false)
 
     if (addError) {
-      setError(addError.code === '23505' ? 'המוצר כבר קיים.' : addError.message)
+      setError(addError.code === '23505' ? 'המוצר כבר קיים.' : userErrorMessage(addError))
       return
     }
 

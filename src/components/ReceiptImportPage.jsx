@@ -6,6 +6,7 @@ import { fetchCatalogFromServer, normalizeReceiptItemsWithAi } from '../lib/rece
 import { getFoodCategory } from '../lib/foodFilters'
 import { supabase } from '../lib/supabase'
 import { isNonFoodProduct } from '../lib/productRules'
+import { userErrorMessage } from '../lib/userErrors'
 
 export default function ReceiptImportPage({ session }) {
   const [receiptUrl, setReceiptUrl] = useState('')
@@ -35,7 +36,7 @@ export default function ReceiptImportPage({ session }) {
       if (enrichedItems.length === 0) throw new Error('לא נמצאו מוצרי מזון להוספה בקבלה.')
       setItems(enrichedItems)
     } catch (scanError) {
-      setError(scanError.message || 'לא הצלחתי לסרוק את הקבלה. נסו שוב.')
+      setError(userErrorMessage(scanError, 'לא הצלחתי לסרוק את הקבלה. נסו שוב.'))
     } finally {
       setLoading(false)
     }
@@ -69,7 +70,7 @@ export default function ReceiptImportPage({ session }) {
       setItems([])
       setReceiptUrl('')
     } catch (saveError) {
-      setError(saveError.message || 'לא הצלחתי להוסיף את המוצרים למלאי. נסו שוב.')
+      setError(userErrorMessage(saveError, 'לא הצלחתי להוסיף את המוצרים למלאי. נסו שוב.'))
     } finally {
       setSaving(false)
     }

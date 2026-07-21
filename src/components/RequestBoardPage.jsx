@@ -4,6 +4,7 @@ import { formatDate } from '../lib/format'
 import { fetchShoppingListItems } from '../lib/foodData'
 import { isNonFoodProduct } from '../lib/productRules'
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
+import { userErrorMessage } from '../lib/userErrors'
 
 export default function RequestBoardPage({ onStartShopping, session }) {
   const [rows, setRows] = useState([])
@@ -16,7 +17,7 @@ export default function RequestBoardPage({ onStartShopping, session }) {
     const { data, error: queryError } = await fetchShoppingListItems(session)
 
     if (queryError) {
-      setError(queryError.message)
+      setError(userErrorMessage(queryError))
       setRows([])
     } else {
       replaceStateWhenChanged(setRows, (data || [])

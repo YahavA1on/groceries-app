@@ -5,6 +5,7 @@ import TopNotice from './TopNotice'
 import { DEFAULT_MANUFACTURER, applyRelatedRatings, deleteShoppingItem, fetchRatingsByOwner, fetchShoppingListItems, setShoppingItemQuantity } from '../lib/foodData'
 import { ALL_CATEGORIES, buildCategoryOptions, filterFoodRows, getFoodCategoryLabel, groupRowsByRank } from '../lib/foodFilters'
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
+import { userErrorMessage } from '../lib/userErrors'
 
 export default function MyRequestsPage({ session }) {
   const [items, setItems] = useState([])
@@ -24,7 +25,7 @@ export default function MyRequestsPage({ session }) {
     ])
 
     if (itemsResult.error) {
-      setError(itemsResult.error.message)
+      setError(userErrorMessage(itemsResult.error))
       setItems([])
     } else {
       replaceStateWhenChanged(setItems, itemsResult.data || [])
@@ -63,7 +64,7 @@ export default function MyRequestsPage({ session }) {
     setSavingId(null)
 
     if (result.error) {
-      setError(result.error.message)
+      setError(userErrorMessage(result.error))
       return
     }
 
@@ -78,7 +79,7 @@ export default function MyRequestsPage({ session }) {
     setSavingId(null)
 
     if (deleteError) {
-      setError(deleteError.message)
+      setError(userErrorMessage(deleteError))
       return
     }
 

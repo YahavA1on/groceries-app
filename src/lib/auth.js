@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { userErrorMessage } from './userErrors'
 
 const STORAGE_KEY = 'groceries_session'
 
@@ -58,7 +59,7 @@ export async function changePassword(session, currentPassword, newPassword) {
     p_current_password: currentPassword,
     p_new_password: newPassword,
   })
-  if (error) return { error: error.message }
+  if (error) return { error: userErrorMessage(error) }
   if (!data || data.error) return { error: errorMessages[data?.error] || 'לא ניתן לשנות את הסיסמה.' }
   return { success: true }
 }
@@ -121,7 +122,7 @@ export async function logout() {
 }
 
 function handleAuthResult(data, error) {
-  if (error) return { error: error.message }
+  if (error) return { error: userErrorMessage(error) }
   if (!data || data.error) return { error: errorMessages[data?.error] || 'לא ניתן להשלים את הפעולה.' }
 
   const session = saveSession(data)

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { disablePushNotifications, enablePushNotifications, getPushSubscription, pushCapability } from '../lib/pushNotifications'
+import { userErrorMessage } from '../lib/userErrors'
 
 export default function PushNotificationSettings({ session }) {
   const capability = pushCapability()
@@ -41,7 +42,7 @@ export default function PushNotificationSettings({ session }) {
         setMessage('ההתראות הופעלו במכשיר הזה.')
       }
     } catch (error) {
-      setMessage(error.message || 'לא ניתן לעדכן את ההתראות.')
+      setMessage(userErrorMessage(error, 'לא ניתן לעדכן את ההתראות.'))
     } finally {
       setBusy(false)
     }
