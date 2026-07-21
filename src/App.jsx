@@ -27,7 +27,6 @@ const shopperTabs = [
 
 const adminTab = { key: 'admin', label: 'ניהול' }
 const systemAdminFamilyTabs = [
-  { key: 'fulfillment', label: 'קנייה' },
   { key: 'catalog', label: 'הוספה' },
   { key: 'my', label: 'רשימה' },
   { key: 'inventory', label: 'מלאי' },
