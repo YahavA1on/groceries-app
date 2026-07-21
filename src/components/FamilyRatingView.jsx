@@ -1,5 +1,5 @@
 export function FamilyRatingPicker({ members, onChange, selectedMemberId }) {
-  if (members.length === 0) return null
+  if (members.length < 2) return null
   return (
     <section className="rounded-2xl bg-white p-3 shadow-sm dark:bg-slate-900">
       <p className="mb-2 text-xs font-black text-slate-500 dark:text-slate-400">הדירוגים של</p>

@@ -66,13 +66,13 @@ export default function CatalogPage({ onSubmitted, session }) {
     commonGroundFoodIds,
     detailsByFood,
     members,
+    ownRatings,
     ratings,
     refreshRatings,
     selectedMemberId,
     setSelectedMemberId,
   } = useFamilyRatings(session, catalogFoods)
-  const canRate = selectedMemberId === session.user_id
-    && (!session.is_system_admin || session.family_id === session.home_family_id)
+  const canRate = (!session.is_system_admin || session.family_id === session.home_family_id)
   const categoryOptions = useMemo(() => buildCategoryOptions(catalogFoods), [catalogFoods])
   const filteredFoods = useMemo(
     () => catalogFoods.filter((food) => matchesFoodFilters(food, search, category)),
@@ -178,7 +178,7 @@ export default function CatalogPage({ onSubmitted, session }) {
 
   function openEditor(food) {
     setEditingFood(food)
-    setEditingValues(buildEditValues(food, ratings[food.id]))
+    setEditingValues(buildEditValues(food, ownRatings[food.id]))
     setConfirmEditClose(false)
   }
 
@@ -190,7 +190,7 @@ export default function CatalogPage({ onSubmitted, session }) {
 
   function requestCloseEditor() {
     if (editingBusy) return
-    if (hasEditChanges(editingFood, editingValues, ratings[editingFood?.id])) {
+    if (hasEditChanges(editingFood, editingValues, ownRatings[editingFood?.id])) {
       setConfirmEditClose(true)
       return
     }
@@ -467,6 +467,7 @@ export default function CatalogPage({ onSubmitted, session }) {
                       ratingDetails={detailsByFood[food.id] || []}
                       showAllRatings={allSelected}
                       commonGround={commonGroundFoodIds.has(food.id)}
+                      editableRating={ownRatings[food.id]}
                     />
                   ))}
                 </div>
@@ -530,7 +531,7 @@ function CategorySubheading({ count, title }) {
   )
 }
 
-function FoodRow({ commonGround, food, onAdd, onDecrement, onEdit, onIncrement, onRate, quantity, rating, ratingBusy, ratingDetails, ratingGroup, showAllRatings }) {
+function FoodRow({ commonGround, editableRating, food, onAdd, onDecrement, onEdit, onIncrement, onRate, quantity, rating, ratingBusy, ratingDetails, ratingGroup, showAllRatings }) {
   const rank = ratingGroup || rankMetaForRating(rating)
 
   return (
@@ -587,7 +588,7 @@ function FoodRow({ commonGround, food, onAdd, onDecrement, onEdit, onIncrement, 
           <span className="shrink-0 text-xs font-black text-slate-500 dark:text-slate-400">דירוג</span>
           {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
             <button
-              className={`h-9 min-w-9 rounded-xl text-sm font-black transition ${ratingColorClass(value, rating === value)}`}
+              className={`h-9 min-w-9 rounded-xl text-sm font-black transition ${ratingColorClass(value, editableRating === value)}`}
               disabled={ratingBusy}
               key={value}
               onClick={() => onRate(value)}

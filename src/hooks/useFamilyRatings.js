@@ -39,10 +39,16 @@ export function useFamilyRatings(session, foods) {
     () => buildFamilyRatingView(foods, overview, effectiveSelectedMemberId),
     [effectiveSelectedMemberId, foods, overview]
   )
+  const ownRatings = useMemo(() => {
+    const ownRows = overview.rows.filter((row) => row.user_id === session.user_id)
+    const exactRatings = Object.fromEntries(ownRows.map((row) => [row.food_id, Number(row.rating)]))
+    return applyRelatedRatings(foods, exactRatings, ownRows)
+  }, [foods, overview.rows, session.user_id])
 
   return {
     ...view,
     members: overview.members,
+    ownRatings,
     refreshRatings,
     selectedMemberId: effectiveSelectedMemberId,
     setSelectedMemberId,

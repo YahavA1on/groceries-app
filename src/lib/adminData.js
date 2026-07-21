@@ -28,7 +28,7 @@ export async function fetchAdminDashboard(session, familyId = null, activityPeri
 
 function activityPeriodStart(period) {
   if (period === 'all') return null
-  const days = period === 'month' ? 30 : 7
+  const days = period === 'day' ? 1 : period === 'month' ? 30 : 7
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
 }
 

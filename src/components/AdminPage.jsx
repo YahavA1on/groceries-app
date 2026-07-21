@@ -14,6 +14,7 @@ const activityTypes = [
 ]
 
 const activityPeriods = [
+  { key: 'day', label: 'יום' },
   { key: 'week', label: 'שבוע' },
   { key: 'month', label: 'חודש' },
   { key: 'all', label: 'כל הזמן' },
@@ -296,7 +297,7 @@ export default function AdminPage({ onSessionChange, session }) {
               ))}
             </div>
 
-            <div className="mt-2 grid grid-cols-3 gap-2 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+            <div className="mt-2 grid grid-cols-4 gap-2 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
               {activityPeriods.map((period) => (
                 <button className={`rounded-lg px-2 py-2 text-xs font-black transition ${activityPeriod === period.key ? 'bg-white text-slate-950 shadow-sm dark:bg-cyan-400 dark:text-slate-950' : 'text-slate-500 dark:text-slate-300'}`} key={period.key} onClick={() => setActivityPeriod(period.key)} type="button">{period.label}</button>
               ))}
