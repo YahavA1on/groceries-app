@@ -72,7 +72,8 @@ export default function CatalogPage({ onSubmitted, session }) {
     selectedMemberId,
     setSelectedMemberId,
   } = useFamilyRatings(session, catalogFoods)
-  const canRate = (!session.is_system_admin || session.family_id === session.home_family_id)
+  const canRate = session.role !== 'shopper'
+    && (!session.is_system_admin || session.family_id === session.home_family_id)
   const categoryOptions = useMemo(() => buildCategoryOptions(catalogFoods), [catalogFoods])
   const filteredFoods = useMemo(
     () => catalogFoods.filter((food) => matchesFoodFilters(food, search, category)),
