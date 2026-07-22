@@ -3,9 +3,13 @@ import { supabase, supabaseKey, supabaseUrl } from './supabase'
 const recipeFunctionUrl = `${supabaseUrl}/functions/v1/recipe-suggestions`
 
 export async function fetchRecipeSuggestions(session) {
-  return supabase.rpc('list_family_recipe_suggestions', {
+  const parameters = {
     p_session_token: session.token,
-  })
+  }
+  const result = await supabase.rpc('list_enabled_family_recipe_suggestions', parameters)
+  return result.error?.code === 'PGRST202'
+    ? supabase.rpc('list_family_recipe_suggestions', parameters)
+    : result
 }
 
 export async function refreshRecipeSuggestions(session) {
@@ -24,8 +28,12 @@ export async function refreshRecipeSuggestions(session) {
 }
 
 export async function chooseRecipe(session, recipeId) {
-  return supabase.rpc('choose_family_recipe', {
+  const parameters = {
     p_session_token: session.token,
     p_recipe_id: recipeId,
-  })
+  }
+  const result = await supabase.rpc('choose_enabled_family_recipe', parameters)
+  return result.error?.code === 'PGRST202'
+    ? supabase.rpc('choose_family_recipe', parameters)
+    : result
 }

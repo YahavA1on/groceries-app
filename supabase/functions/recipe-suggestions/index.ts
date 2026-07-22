@@ -2,7 +2,9 @@ const ALLOWED_ORIGINS = new Set(['https://yahava1on.github.io'])
 const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-flash-lite-latest'
 const MAX_INVENTORY_ITEMS = 80
 const MAX_RECIPES = 8
+const MIN_CATALOG_RECIPES = 5
 const MAX_PAGE_BYTES = 1_500_000
+const SALAD_PATTERN = /סלט|salad/i
 const NON_FOOD_PATTERN = /פדים|איפור|שמפו|מרכך|סבון|חיתולים|מגבונים|שקיות|נייר|בלונים|אקונומיקה|כביסה|דאודורנט|משחת\s*שיניים|כלים\s*חד|פיקדון|פקדון|(?:^|\s)מים(?:\s|$)|shampoo|soap|cleaner|detergent|cosmetic|balloons?/i
 
 type InventoryItem = {
@@ -50,66 +52,71 @@ Deno.serve(async (request) => {
   if (!sessionToken) return jsonResponse({ error: 'Missing session token' }, 400, corsHeaders)
 
   try {
-    const inventory = await callRpc<InventoryItem[]>('get_recipe_inventory_context', {
-      p_session_token: sessionToken,
-    })
+    const inventory = await callRpcWithFallback<InventoryItem[]>(
+      'get_enabled_recipe_inventory_context',
+      'get_recipe_inventory_context',
+      { p_session_token: sessionToken },
+    )
     if (!Array.isArray(inventory) || inventory.length === 0) {
       return jsonResponse({ recipes: 0, reason: 'EMPTY_INVENTORY' }, 200, corsHeaders)
     }
 
-    const candidates = await searchHebrewRecipes(inventory)
+    const sharedCatalog = await callOptionalRpc<RecipeCandidate[]>('list_shared_recipe_catalog', {
+      p_session_token: sessionToken,
+    }, true) || []
+    let candidates = rankCatalogCandidates(sharedCatalog, inventory).slice(0, MAX_RECIPES)
+    let externalSearches = 0
+
+    if (candidates.length < MIN_CATALOG_RECIPES) {
+      const searchQuery = buildRecipeSearchQuery(inventory)
+      const searchKey = cleanString(searchQuery, 300).toLocaleLowerCase('he')
+      const claimed = searchKey
+        ? await callOptionalRpc<boolean>('claim_shared_recipe_search', {
+          p_session_token: sessionToken,
+          p_search_key: searchKey,
+        }, true)
+        : false
+      if (claimed) {
+        const searched = await searchHebrewRecipes(searchQuery)
+        externalSearches = 1
+        await callRpc<number>('cache_shared_recipe_catalog', {
+          p_session_token: sessionToken,
+          p_search_key: searchKey,
+          p_recipes: searched,
+        }, true)
+        candidates = uniqueRecipeCandidates([...candidates, ...searched]).slice(0, MAX_RECIPES)
+      }
+    }
     console.log(JSON.stringify({ event: 'recipe_candidates_ready', count: candidates.length }))
     if (candidates.length === 0) {
-      return jsonResponse({ recipes: 0, reason: 'NO_RESULTS' }, 200, corsHeaders)
+      return jsonResponse({ recipes: 0, reason: 'CATALOG_EMPTY', external_searches: externalSearches }, 200, corsHeaders)
     }
 
     const recipes = await normalizeRecipes(candidates, inventory.slice(0, MAX_INVENTORY_ITEMS))
     console.log(JSON.stringify({ event: 'recipes_normalized', count: recipes.length }))
-    const saved = await callRpc<number>('cache_family_recipe_suggestions', {
-      p_session_token: sessionToken,
-      p_recipes: recipes,
-    })
-    return jsonResponse({ recipes: Number(saved || 0) }, 200, corsHeaders)
+    const saved = await callRpcWithFallback<number>(
+      'cache_enabled_family_recipe_suggestions',
+      'cache_family_recipe_suggestions',
+      { p_session_token: sessionToken, p_recipes: recipes },
+    )
+    return jsonResponse({ recipes: Number(saved || 0), external_searches: externalSearches }, 200, corsHeaders)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Recipe search failed'
     return jsonResponse({ error: message }, 502, corsHeaders)
   }
 })
 
-async function searchHebrewRecipes(inventory: InventoryItem[]) {
+async function searchHebrewRecipes(query: string) {
   const apiKey = Deno.env.get('SERPAPI_KEY')?.trim()
   if (!apiKey) throw new Error('SerpApi is not configured')
-
-  const searchTerms = inventory
-    .filter((item) => item.name && !NON_FOOD_PATTERN.test(`${item.name} ${item.manufacturer || ''}`))
-    .sort((a, b) => recipeSearchPriority(a) - recipeSearchPriority(b))
-    .slice(0, 6)
-    .map((item) => genericFoodName(item.name, item.manufacturer))
-    .filter(Boolean)
-  const searchQueries = Array.from(new Set([
-    ...searchTerms.slice(0, 3).map((term) => `מתכון ${term}`),
-    `מתכונים עם ${searchTerms.slice(0, 2).join(' ')}`,
-    `מתכונים עם ${searchTerms.slice(0, 4).join(' ')}`,
-    ...searchTerms.slice(3, 6).map((term) => `מתכון ${term}`),
-  ].filter((query) => query.trim() !== 'מתכונים עם')))
-  const detailed: RecipeCandidate[] = []
-  const seenUrls = new Set<string>()
-
-  for (const [queryIndex, query] of searchQueries.entries()) {
-    const baseCandidates = (await fetchSerpCandidates(query, apiKey))
-      .filter((candidate) => !seenUrls.has(candidate.source_url))
-    console.log(JSON.stringify({ event: 'recipe_search_results', query, candidates: baseCandidates.length }))
-    for (const candidate of baseCandidates) seenUrls.add(candidate.source_url)
-    const enriched = await Promise.all(baseCandidates.map(enrichRecipeCandidate))
-    const validRecipes = enriched.filter((candidate): candidate is RecipeCandidate => candidate !== null)
-    console.log(JSON.stringify({ event: 'recipe_pages_validated', query, valid: validRecipes.length }))
-    detailed.push(...validRecipes)
-    // Always search the first three distinct inventory anchors so one food
-    // cannot fill the entire page with near-identical recipes.
-    if (queryIndex >= 2 && detailed.length >= 5) break
-  }
-
-  return detailed.slice(0, MAX_RECIPES)
+  const baseCandidates = await fetchSerpCandidates(query, apiKey)
+  console.log(JSON.stringify({ event: 'recipe_search_results', query, candidates: baseCandidates.length }))
+  const enriched = await Promise.all(baseCandidates.map(enrichRecipeCandidate))
+  const validRecipes = enriched.filter((candidate): candidate is RecipeCandidate => (
+    candidate !== null && !SALAD_PATTERN.test(candidate.title)
+  ))
+  console.log(JSON.stringify({ event: 'recipe_pages_validated', query, valid: validRecipes.length }))
+  return validRecipes.slice(0, MAX_RECIPES)
 }
 
 async function fetchSerpCandidates(query: string, apiKey: string): Promise<SearchCandidate[]> {
@@ -168,6 +175,7 @@ async function fetchSerpCandidates(query: string, apiKey: string): Promise<Searc
   }))
   const seen = new Set<string>()
   return candidates.filter((candidate) => {
+    if (SALAD_PATTERN.test(candidate.title)) return false
     if (seen.has(candidate.source_url)) return false
     seen.add(candidate.source_url)
     return true
@@ -191,7 +199,9 @@ async function enrichRecipeCandidate(candidate: SearchCandidate): Promise<Recipe
     const ingredients = Array.isArray(structured.recipeIngredient)
       ? structured.recipeIngredient.map((item: unknown) => cleanString(item, 500)).filter(Boolean)
       : candidate.fallback_ingredients
-    if (!Number.isFinite(rating) || rating < 4 || !totalTime || ingredients.length === 0) {
+    const title = cleanString(structured.name, 300) || candidate.title
+    const recipeType = `${title} ${cleanString(structured.recipeCategory, 300)}`
+    if (SALAD_PATTERN.test(recipeType) || !Number.isFinite(rating) || rating < 4 || !totalTime || ingredients.length === 0) {
       console.log(JSON.stringify({
         event: 'recipe_page_rejected',
         host: new URL(candidate.source_url).hostname,
@@ -203,7 +213,7 @@ async function enrichRecipeCandidate(candidate: SearchCandidate): Promise<Recipe
     }
     return {
       external_key: await sha256(candidate.source_url),
-      title: cleanString(structured.name, 300) || candidate.title,
+      title,
       source_name: candidate.source_name,
       source_url: candidate.source_url,
       rating: Math.min(5, rating),
@@ -320,6 +330,8 @@ async function normalizeRecipes(candidates: RecipeCandidate[], inventory: Invent
   const normalizedRecipes = candidates.flatMap((candidate, index) => {
     const result = normalized.find((item: Record<string, unknown>) => Number(item.recipe_index) === index)
     if (!result || !Array.isArray(result.ingredients)) return []
+    const normalizedTitle = safeText(result.title, safeText(candidate.title, 'שם המתכון אינו זמין', 300), 300)
+    if (SALAD_PATTERN.test(normalizedTitle)) return []
     const ingredients = result.ingredients.slice(0, 40).map((item: Record<string, unknown>, ingredientIndex: number) => {
       const foodId = cleanString(item.food_id, 100)
       const requiredQuantity = Number(item.inventory_quantity_required)
@@ -344,7 +356,7 @@ async function normalizeRecipes(candidates: RecipeCandidate[], inventory: Invent
       : 0
     return [{
       ...candidate,
-      title: safeText(result.title, safeText(candidate.title, 'שם המתכון אינו זמין', 300), 300),
+      title: normalizedTitle,
       ingredient_lines: undefined,
       ingredients,
       inventory_match_percent: inventoryMatchPercent,
@@ -394,18 +406,38 @@ function recipeSchema() {
   }
 }
 
-async function callRpc<T>(name: string, body: Record<string, unknown>): Promise<T> {
+async function rpcResponse(name: string, body: Record<string, unknown>, privileged = false) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
   if (!supabaseUrl || !anonKey) throw new Error('Supabase function environment is incomplete')
-  const response = await fetch(`${supabaseUrl}/rest/v1/rpc/${name}`, {
+  const apiKey = privileged && serviceRoleKey ? serviceRoleKey : anonKey
+  return await fetch(`${supabaseUrl}/rest/v1/rpc/${name}`, {
     method: 'POST',
-    headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
+    headers: { apikey: apiKey, Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(20_000),
   })
+}
+
+async function callRpc<T>(name: string, body: Record<string, unknown>, privileged = false): Promise<T> {
+  const response = await rpcResponse(name, body, privileged)
   if (!response.ok) throw new Error(`Recipe database request failed (${response.status})`)
   return await response.json() as T
+}
+
+async function callOptionalRpc<T>(name: string, body: Record<string, unknown>, privileged = false): Promise<T | null> {
+  const response = await rpcResponse(name, body, privileged)
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error(`Recipe database request failed (${response.status})`)
+  return await response.json() as T
+}
+
+async function callRpcWithFallback<T>(primary: string, fallback: string, body: Record<string, unknown>): Promise<T> {
+  const response = await rpcResponse(primary, body, true)
+  if (response.ok) return await response.json() as T
+  if (response.status !== 404) throw new Error(`Recipe database request failed (${response.status})`)
+  return await callRpc<T>(fallback, body)
 }
 
 function parseDurationMinutes(value: unknown): number {
@@ -445,6 +477,49 @@ function genericFoodName(value: string, manufacturer = '') {
     result = result.replace(new RegExp(escapeRegExp(word), 'gi'), ' ')
   }
   return result.replace(/\s+/g, ' ').trim()
+}
+
+function inventorySearchTerms(inventory: InventoryItem[]) {
+  return Array.from(new Set(inventory
+    .filter((item) => item.name
+      && !NON_FOOD_PATTERN.test(`${item.name} ${item.manufacturer || ''}`)
+      && !SALAD_PATTERN.test(item.name))
+    .sort((a, b) => recipeSearchPriority(a) - recipeSearchPriority(b))
+    .map((item) => genericFoodName(item.name, item.manufacturer))
+    .filter((term) => term.length >= 2)))
+}
+
+function buildRecipeSearchQuery(inventory: InventoryItem[]) {
+  const terms = inventorySearchTerms(inventory).slice(0, 3)
+  return terms.length > 0 ? `מתכון עם ${terms.join(' ')} -סלט` : 'מתכון ארוחה ביתית -סלט'
+}
+
+function rankCatalogCandidates(candidates: RecipeCandidate[], inventory: InventoryItem[]) {
+  const terms = inventorySearchTerms(inventory).slice(0, 20).map((term) => term.toLocaleLowerCase('he'))
+  return candidates
+    .filter((candidate) => candidate?.source_url
+      && Array.isArray(candidate.ingredient_lines)
+      && candidate.ingredient_lines.length > 0
+      && !SALAD_PATTERN.test(candidate.title))
+    .map((candidate) => {
+      const searchable = `${candidate.title} ${candidate.ingredient_lines.join(' ')}`.toLocaleLowerCase('he')
+      const matchScore = terms.reduce((score, term) => score + (searchable.includes(term) ? 1 : 0), 0)
+      return { candidate, matchScore }
+    })
+    .sort((left, right) => right.matchScore - left.matchScore
+      || right.candidate.rating - left.candidate.rating
+      || right.candidate.reviews - left.candidate.reviews)
+    .map(({ candidate }) => candidate)
+}
+
+function uniqueRecipeCandidates(candidates: RecipeCandidate[]) {
+  const seen = new Set<string>()
+  return candidates.filter((candidate) => {
+    const key = candidate.external_key || candidate.source_url
+    if (!key || seen.has(key) || SALAD_PATTERN.test(candidate.title)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function escapeRegExp(value: string) {

@@ -99,14 +99,16 @@ export default function App() {
 
 function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange, onToggleTheme, session }) {
   const { count } = useCart()
+  const [familyDetails, setFamilyDetails] = useState(null)
+  const [profileOpen, setProfileOpen] = useState(false)
   const householdTabs = session.role === 'shopper' ? shopperTabs : ownerTabs
-  const tabs = session.is_system_admin
+  const baseTabs = session.is_system_admin
     ? session.family_id ? systemAdminFamilyTabs : [adminTab]
     : session.is_admin
       ? [...householdTabs, adminTab]
-    : householdTabs
-  const [familyDetails, setFamilyDetails] = useState(null)
-  const [profileOpen, setProfileOpen] = useState(false)
+      : householdTabs
+  const recipesEnabled = familyDetails?.recipes_enabled ?? isAlonFamily(session.family_name)
+  const tabs = baseTabs.filter((tab) => tab.key !== 'recipes' || recipesEnabled)
 
   useEffect(() => {
     if (!session.family_id) return undefined
@@ -118,6 +120,10 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
       cancelled = true
     }
   }, [session.family_id, session.family_name, session.token])
+
+  useEffect(() => {
+    if (activeTab === 'recipes' && familyDetails && !recipesEnabled) onTabChange(defaultTab(session))
+  }, [activeTab, familyDetails, onTabChange, recipesEnabled, session])
 
   const page = useMemo(() => {
     if (activeTab === 'admin' && session.is_admin) return <AdminPage onSessionChange={onSessionChange} session={session} />
@@ -219,4 +225,8 @@ function defaultTab(session) {
   if (session?.is_system_admin) return 'admin'
   if (session?.is_admin && !session?.family_id) return 'admin'
   return session?.role === 'shopper' ? 'fulfillment' : 'catalog'
+}
+
+function isAlonFamily(value) {
+  return typeof value === 'string' && value.replace(/^הבית של משפחת\s*/, '').trim() === 'אלון'
 }
