@@ -69,8 +69,7 @@ Deno.serve(async (request) => {
     let externalSearches = 0
 
     if (candidates.length < MIN_CATALOG_RECIPES) {
-      const searchQuery = buildRecipeSearchQuery(inventory)
-      const searchKey = `focused-v2:${cleanString(searchQuery, 280).toLocaleLowerCase('he')}`
+      const searchKey = await inventoryRecipeSearchKey(inventory)
       const claimed = searchKey
         ? await callOptionalRpc<boolean>('claim_shared_recipe_search', {
           p_session_token: sessionToken,
@@ -78,6 +77,7 @@ Deno.serve(async (request) => {
         }, true)
         : false
       if (claimed) {
+        const searchQuery = await planRecipeSearch(inventory)
         const searched = await searchHebrewRecipes(searchQuery)
         externalSearches = 1
         await callRpc<number>('cache_shared_recipe_catalog', {
@@ -118,6 +118,78 @@ async function searchHebrewRecipes(query: string) {
   ))
   console.log(JSON.stringify({ event: 'recipe_pages_validated', query, valid: validRecipes.length }))
   return validRecipes.slice(0, MAX_RECIPES)
+}
+
+async function planRecipeSearch(inventory: InventoryItem[]) {
+  const fallbackQuery = buildRecipeSearchQuery(inventory)
+  const apiKey = Deno.env.get('GEMINI_API_KEY')?.trim()
+  if (!apiKey) return fallbackQuery
+
+  const usableInventory = inventory
+    .filter((item) => item.name
+      && !NON_FOOD_PATTERN.test(`${item.name} ${item.manufacturer || ''}`)
+      && !SALAD_PATTERN.test(item.name))
+    .sort((a, b) => recipeSearchPriority(a) - recipeSearchPriority(b))
+    .slice(0, 40)
+    .map((item) => ({
+      name: item.name,
+      category: item.category,
+      quantity: item.quantity,
+      unit_qty: item.unit_qty,
+    }))
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: [
+            'Suggest exactly 8 diverse Hebrew main-dish names based on this household inventory.',
+            'Use the strongest main ingredients first and prefer dishes that use several available products.',
+            'If minced or ground meat exists, include several genuinely different meat dishes such as baked, stuffed, pasta, meatballs, or pastry dishes.',
+            'Do not suggest salads, mashed vegetables, side dishes, drinks, desserts, or near-duplicate dishes.',
+            'The dish names must be common enough to find real Hebrew recipes on Google.',
+            'Return dish names only in the requested JSON structure. Do not invent ratings, URLs, or recipe details.',
+            JSON.stringify(usableInventory),
+          ].join('\n') }] }],
+          generationConfig: {
+            temperature: 0.2,
+            responseMimeType: 'application/json',
+            responseJsonSchema: {
+              type: 'object',
+              properties: {
+                dishes: {
+                  type: 'array',
+                  minItems: 5,
+                  maxItems: 8,
+                  items: { type: 'string' },
+                },
+              },
+              required: ['dishes'],
+              additionalProperties: false,
+            },
+          },
+        }),
+        signal: AbortSignal.timeout(30_000),
+      },
+    )
+    if (!response.ok) throw new Error(`Gemini planning returned ${response.status}`)
+    const payload = await response.json()
+    const outputText = payload?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || '').join('')
+    const output = outputText ? JSON.parse(outputText) : null
+    const dishes = uniqueDishNames(output?.dishes)
+    if (dishes.length < MIN_CATALOG_RECIPES) return fallbackQuery
+    console.log(JSON.stringify({ event: 'recipe_search_planned', dishes: dishes.length }))
+    return buildDishSearchQuery(dishes)
+  } catch (error) {
+    console.log(JSON.stringify({
+      event: 'recipe_search_plan_failed',
+      error: error instanceof Error ? error.message.slice(0, 160) : 'unknown',
+    }))
+    return fallbackQuery
+  }
 }
 
 async function fetchSerpCandidates(query: string, apiKey: string): Promise<SearchCandidate[]> {
@@ -494,6 +566,28 @@ function inventorySearchTerms(inventory: InventoryItem[]) {
 function buildRecipeSearchQuery(inventory: InventoryItem[]) {
   const mainIngredient = inventorySearchTerms(inventory)[0]
   return mainIngredient ? `מתכונים עם ${mainIngredient} -סלט` : 'מתכונים לארוחה ביתית -סלט'
+}
+
+async function inventoryRecipeSearchKey(inventory: InventoryItem[]) {
+  const fingerprint = inventorySearchTerms(inventory).slice(0, 12).sort().join('|')
+  return fingerprint ? `gemini-plan-v1:${await sha256(fingerprint)}` : ''
+}
+
+function uniqueDishNames(value: unknown) {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  return value.flatMap((item) => {
+    const dish = cleanString(item, 100).replace(/["“”]/g, '')
+    const key = dish.toLocaleLowerCase('he')
+    if (!dish || SALAD_PATTERN.test(dish) || seen.has(key)) return []
+    seen.add(key)
+    return [dish]
+  }).slice(0, MAX_RECIPES)
+}
+
+function buildDishSearchQuery(dishes: string[]) {
+  const alternatives = dishes.map((dish) => `"${dish}"`).join(' OR ')
+  return `מתכון (${alternatives}) -סלט`
 }
 
 function rankCatalogCandidates(candidates: RecipeCandidate[], inventory: InventoryItem[]) {
