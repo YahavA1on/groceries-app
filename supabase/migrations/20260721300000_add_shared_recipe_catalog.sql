@@ -64,8 +64,33 @@ from public.recipe_suggestions suggestion
 join public.families family on family.id = suggestion.family_id
 where family.recipes_enabled
   and suggestion.title !~* '(סלט|salad)'
+  and position(chr(65533) in suggestion.title) = 0
+  and position(chr(65533) in suggestion.ingredients::text) = 0
 order by suggestion.external_key, suggestion.updated_at desc
 on conflict (external_key) do nothing;
+
+delete from public.recipe_catalog
+ where position(chr(65533) in title) > 0
+    or position(chr(65533) in ingredient_lines::text) > 0
+    or title like '%ï¿½%'
+    or ingredient_lines::text like '%ï¿½%';
+
+delete from public.recipe_suggestions suggestion
+using public.families family
+ where family.id = suggestion.family_id
+   and family.recipes_enabled
+   and (
+     position(chr(65533) in suggestion.title) > 0
+     or position(chr(65533) in suggestion.ingredients::text) > 0
+     or suggestion.title like '%ï¿½%'
+     or suggestion.ingredients::text like '%ï¿½%'
+     or exists (
+       select 1
+         from jsonb_array_elements(suggestion.ingredients) ingredient
+        where btrim(coalesce(ingredient->>'name', '')) = ''
+           or btrim(coalesce(ingredient->>'required_text', '')) = ''
+     )
+   );
 
 create or replace function public.get_family_details(p_session_token text)
 returns jsonb
@@ -127,6 +152,8 @@ begin
     select catalog.*
       from public.recipe_catalog catalog
      where catalog.title !~* '(סלט|salad)'
+       and position(chr(65533) in catalog.title) = 0
+       and position(chr(65533) in catalog.ingredient_lines::text) = 0
        and jsonb_array_length(catalog.ingredient_lines) > 0
      order by catalog.rating desc, catalog.reviews desc, catalog.updated_at desc
      limit 20;
@@ -291,8 +318,16 @@ begin
   end if;
   return query
     select suggestion.*
-      from public.list_family_recipe_suggestions(p_session_token) suggestion
-     where suggestion.title !~* '(סלט|salad)';
+     from public.list_family_recipe_suggestions(p_session_token) suggestion
+     where suggestion.title !~* '(סלט|salad)'
+       and position(chr(65533) in suggestion.title) = 0
+       and position(chr(65533) in suggestion.ingredients::text) = 0
+       and not exists (
+         select 1
+           from jsonb_array_elements(suggestion.ingredients) ingredient
+          where btrim(coalesce(ingredient->>'name', '')) = ''
+             or btrim(coalesce(ingredient->>'required_text', '')) = ''
+       );
 end;
 $$;
 

@@ -113,7 +113,7 @@ async function searchHebrewRecipes(query: string) {
   console.log(JSON.stringify({ event: 'recipe_search_results', query, candidates: baseCandidates.length }))
   const enriched = await Promise.all(baseCandidates.map(enrichRecipeCandidate))
   const validRecipes = enriched.filter((candidate): candidate is RecipeCandidate => (
-    candidate !== null && !SALAD_PATTERN.test(candidate.title)
+    candidate !== null && isUsableRecipeCandidate(candidate) && !SALAD_PATTERN.test(candidate.title)
   ))
   console.log(JSON.stringify({ event: 'recipe_pages_validated', query, valid: validRecipes.length }))
   return validRecipes.slice(0, MAX_RECIPES)
@@ -497,9 +497,7 @@ function buildRecipeSearchQuery(inventory: InventoryItem[]) {
 function rankCatalogCandidates(candidates: RecipeCandidate[], inventory: InventoryItem[]) {
   const terms = inventorySearchTerms(inventory).slice(0, 20).map((term) => term.toLocaleLowerCase('he'))
   return candidates
-    .filter((candidate) => candidate?.source_url
-      && Array.isArray(candidate.ingredient_lines)
-      && candidate.ingredient_lines.length > 0
+    .filter((candidate) => isUsableRecipeCandidate(candidate)
       && !SALAD_PATTERN.test(candidate.title))
     .map((candidate) => {
       const searchable = `${candidate.title} ${candidate.ingredient_lines.join(' ')}`.toLocaleLowerCase('he')
@@ -516,7 +514,7 @@ function uniqueRecipeCandidates(candidates: RecipeCandidate[]) {
   const seen = new Set<string>()
   return candidates.filter((candidate) => {
     const key = candidate.external_key || candidate.source_url
-    if (!key || seen.has(key) || SALAD_PATTERN.test(candidate.title)) return false
+    if (!key || seen.has(key) || !isUsableRecipeCandidate(candidate) || SALAD_PATTERN.test(candidate.title)) return false
     seen.add(key)
     return true
   })
@@ -606,6 +604,15 @@ function brokenTextScore(value: string) {
 
 function hasBrokenText(value: string) {
   return /\uFFFD|ï¿½|(?:\?\s*){3,}/.test(value)
+}
+
+function isUsableRecipeCandidate(candidate: RecipeCandidate) {
+  return Boolean(candidate?.source_url)
+    && Boolean(cleanString(candidate?.title, 300))
+    && !hasBrokenText(candidate.title)
+    && Array.isArray(candidate.ingredient_lines)
+    && candidate.ingredient_lines.length > 0
+    && candidate.ingredient_lines.every((line) => Boolean(cleanString(line, 500)) && !hasBrokenText(line))
 }
 
 function safeText(value: unknown, fallback: string, maxLength: number) {

@@ -5,6 +5,8 @@ import { chooseRecipe, fetchRecipeSuggestions, refreshRecipeSuggestions } from '
 import { replaceStateWhenChanged } from '../lib/stateUpdates'
 import { userErrorMessage } from '../lib/userErrors'
 
+const MIN_RECIPE_COUNT = 5
+
 export default function RecipesPage({ session }) {
   const [recipes, setRecipes] = useState([])
   const [inventory, setInventory] = useState([])
@@ -27,7 +29,7 @@ export default function RecipesPage({ session }) {
       setLoading(false)
       return
     }
-    replaceStateWhenChanged(setRecipes, recipesResult.data || [])
+    replaceStateWhenChanged(setRecipes, (recipesResult.data || []).filter(isUsableRecipe))
     replaceStateWhenChanged(setInventory, inventoryResult.data || [])
     setLoading(false)
   }, [session])
@@ -40,7 +42,7 @@ export default function RecipesPage({ session }) {
       const result = await refreshRecipeSuggestions(session)
       const refreshed = await fetchRecipeSuggestions(session)
       if (refreshed.error) throw refreshed.error
-      replaceStateWhenChanged(setRecipes, refreshed.data || [])
+      replaceStateWhenChanged(setRecipes, (refreshed.data || []).filter(isUsableRecipe))
       if (result.reason === 'EMPTY_INVENTORY') setError('אין מוצרים במלאי שמהם אפשר להציע מתכונים.')
       else if (result.recipes === 0) setError('לא נמצאו כרגע מתכונים בעברית עם דירוג 4 ומעלה. נסו שוב מאוחר יותר.')
       else setSuccess(`נמצאו ${result.recipes} מתכונים שמתאימים למלאי.`)
@@ -61,7 +63,7 @@ export default function RecipesPage({ session }) {
   }, [loadPage])
 
   useEffect(() => {
-    if (loading || searching || inventory.length === 0 || recipes.length > 0 || autoSearchStarted.current) return
+    if (loading || searching || inventory.length === 0 || recipes.length >= MIN_RECIPE_COUNT || autoSearchStarted.current) return
     autoSearchStarted.current = true
     void searchRecipes()
   }, [inventory.length, loading, recipes.length, searchRecipes, searching])
@@ -247,6 +249,19 @@ function normalizedIngredients(value) {
 function safeDisplayText(value, fallback) {
   const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : ''
   return text && !/\uFFFD|ï¿½|(?:\?\s*){3,}/.test(text) ? text : fallback
+}
+
+function isUsableRecipe(recipe) {
+  if (!isUsableRecipeText(recipe?.title) || !Array.isArray(recipe?.ingredients) || recipe.ingredients.length === 0) return false
+  return recipe.ingredients.every((ingredient) => (
+    isUsableRecipeText(ingredient?.name) && isUsableRecipeText(ingredient?.required_text)
+  ))
+}
+
+function isUsableRecipeText(value) {
+  return typeof value === 'string'
+    && value.trim().length > 0
+    && !/\uFFFD|ï¿½|(?:\?\s*){3,}/.test(value)
 }
 
 function ingredientAvailability(ingredient, inventoryByFoodId) {
