@@ -2,6 +2,7 @@ const ALLOWED_ORIGINS = new Set(['https://yahava1on.github.io'])
 const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') || 'gemini-flash-lite-latest'
 const MAX_INVENTORY_ITEMS = 80
 const MAX_RECIPES = 8
+const MAX_SEARCH_CANDIDATES = 20
 const MIN_CATALOG_RECIPES = 5
 const MAX_PAGE_BYTES = 1_500_000
 const SALAD_PATTERN = /סלט|salad/i
@@ -69,7 +70,7 @@ Deno.serve(async (request) => {
 
     if (candidates.length < MIN_CATALOG_RECIPES) {
       const searchQuery = buildRecipeSearchQuery(inventory)
-      const searchKey = cleanString(searchQuery, 300).toLocaleLowerCase('he')
+      const searchKey = `focused-v2:${cleanString(searchQuery, 280).toLocaleLowerCase('he')}`
       const claimed = searchKey
         ? await callOptionalRpc<boolean>('claim_shared_recipe_search', {
           p_session_token: sessionToken,
@@ -126,6 +127,7 @@ async function fetchSerpCandidates(query: string, apiKey: string): Promise<Searc
   url.searchParams.set('hl', 'he')
   url.searchParams.set('gl', 'il')
   url.searchParams.set('location', 'Israel')
+  url.searchParams.set('num', String(MAX_SEARCH_CANDIDATES))
   url.searchParams.set('api_key', apiKey)
 
   const response = await fetch(url, { signal: AbortSignal.timeout(20_000) })
@@ -179,7 +181,7 @@ async function fetchSerpCandidates(query: string, apiKey: string): Promise<Searc
     if (seen.has(candidate.source_url)) return false
     seen.add(candidate.source_url)
     return true
-  }).slice(0, MAX_RECIPES)
+  }).slice(0, MAX_SEARCH_CANDIDATES)
 }
 
 async function enrichRecipeCandidate(candidate: SearchCandidate): Promise<RecipeCandidate | null> {
@@ -490,8 +492,8 @@ function inventorySearchTerms(inventory: InventoryItem[]) {
 }
 
 function buildRecipeSearchQuery(inventory: InventoryItem[]) {
-  const terms = inventorySearchTerms(inventory).slice(0, 3)
-  return terms.length > 0 ? `מתכון עם ${terms.join(' ')} -סלט` : 'מתכון ארוחה ביתית -סלט'
+  const mainIngredient = inventorySearchTerms(inventory)[0]
+  return mainIngredient ? `מתכונים עם ${mainIngredient} -סלט` : 'מתכונים לארוחה ביתית -סלט'
 }
 
 function rankCatalogCandidates(candidates: RecipeCandidate[], inventory: InventoryItem[]) {
@@ -526,6 +528,7 @@ function escapeRegExp(value: string) {
 
 function recipeSearchPriority(item: InventoryItem) {
   const value = `${item.category || ''} ${item.name || ''}`
+  if (/בשר\s*(?:בקר\s*)?טחון|בקר\s*טחון|טחון\s*(?:בקר\s*)?בשר|ground\s+(?:beef|meat)|minced\s+(?:beef|meat)/i.test(value)) return -1
   if (/בשר|דגים|עוף|קטניות|דגנים|פסטה|אורז/i.test(value)) return 0
   if (/פירות|ירקות|ביצים|חלב|גבינ/i.test(value)) return 1
   if (/בישול|אפייה|שימורים/i.test(value)) return 2
