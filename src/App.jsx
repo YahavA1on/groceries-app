@@ -222,9 +222,8 @@ function AppShell({ activeTab, darkMode, onLogout, onSessionChange, onTabChange,
 }
 
 function defaultTab(session) {
-  if (session?.is_system_admin) return 'admin'
-  if (session?.is_admin && !session?.family_id) return 'admin'
-  return session?.role === 'shopper' ? 'fulfillment' : 'catalog'
+  if ((session?.is_system_admin || session?.is_admin) && !session?.family_id) return 'admin'
+  return 'catalog'
 }
 
 function isAlonFamily(value) {
